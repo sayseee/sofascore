@@ -203,36 +203,35 @@ class ScheduledEventsCollector {
     /**
      * Upsert Season
      */
-    async upsertSeason(tournamentId, seasonData) {
-        if (!seasonData?.id || !tournamentId) return null;
+    async upsertSeason(dbTournamentId, seasonData) {
+    if (!seasonData?.id || !dbTournamentId) return null;
 
-        const existing = await db.query(
-            'SELECT id FROM seasons WHERE tournament_id = ? AND sofascore_season_id = ?',
-            [tournamentId, seasonData.id]
+    // ⚡ FIX: Match on BOTH tournament_id AND sofascore_season_id
+    const existing = await db.query(
+        'SELECT id FROM seasons WHERE tournament_id = ? AND sofascore_season_id = ?',
+        [dbTournamentId, seasonData.id]
+    );
+
+    if (existing.length > 0) {
+        await db.query(
+            `UPDATE seasons SET name = ?, year = ?, is_current = ?, 
+             unique_tournament_id = (SELECT unique_tournament_id FROM tournaments WHERE id = ?),
+             updated_at = NOW() 
+             WHERE id = ?`,
+            [seasonData.name || 'Unknown Season', seasonData.year || null, 0, dbTournamentId, existing[0].id]
         );
-
-        if (existing.length > 0) {
-            await db.query(
-                `UPDATE seasons SET name = ?, year = ?, updated_at = NOW() WHERE id = ?`,
-                [seasonData.name || 'Unknown Season', seasonData.year || null, existing[0].id]
-            );
-            this.stats.seasons.updated++;
-            return existing[0].id;
-        } else {
-            const result = await db.query(
-                `INSERT INTO seasons (tournament_id, sofascore_season_id, name, year)
-                VALUES (?, ?, ?, ?)`,
-                [
-                    tournamentId,
-                    seasonData.id,
-                    seasonData.name || 'Unknown Season',
-                    seasonData.year || null
-                ]
-            );
-            this.stats.seasons.inserted++;
-            return result.insertId;
-        }
+        this.stats.seasons.updated++;
+        return existing[0].id;
+    } else {
+        const result = await db.query(
+            `INSERT INTO seasons (tournament_id, sofascore_season_id, name, year, is_current, unique_tournament_id)
+            SELECT ?, ?, ?, ?, 0, unique_tournament_id FROM tournaments WHERE id = ?`,
+            [dbTournamentId, seasonData.id, seasonData.name || 'Unknown Season', seasonData.year || null, dbTournamentId]
+        );
+        this.stats.seasons.inserted++;
+        return result.insertId;
     }
+}
 
     /**
      * Upsert Match - The core function that saves match data
