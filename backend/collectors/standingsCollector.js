@@ -102,26 +102,34 @@ class StandingsCollector {
     }
 
     async collectActiveTournaments() {
-        await this.initialize();
-        
-        const seasons = await db.query(
-            `SELECT s.id as season_id, s.sofascore_season_id, t.id as tournament_id, 
-                    t.sofascore_tournament_id, t.name
-            FROM seasons s
-            JOIN tournaments t ON s.tournament_id = t.id
-            WHERE s.is_current = 1 OR s.end_date >= CURDATE()
-            LIMIT 20`
-        );
+    await this.initialize();
+    
+    const seasons = await db.query(
+        `SELECT s.id as season_id, s.sofascore_season_id, s.name as season_name,
+                t.id as tournament_id, t.unique_tournament_id, t.name as tournament_name
+        FROM seasons s
+        JOIN tournaments t ON s.tournament_id = t.id
+        WHERE s.is_current = 1
+        LIMIT 20`
+    );
 
-        console.log(`\n📊 Collecting standings for ${seasons.length} active tournaments\n`);
+    console.log(`\n📊 Found ${seasons.length} active seasons:\n`);
+    
+    for (const s of seasons) {
+        console.log(`   Tournament: ${s.tournament_name} (unique_id: ${s.unique_tournament_id})`);
+        console.log(`   Season: ${s.season_name} (season_id: ${s.sofascore_season_id})`);
+        console.log(`   API call: /unique-tournament/${s.unique_tournament_id}/season/${s.sofascore_season_id}/standings/total\n`);
         
-        for (const s of seasons) {
-            await this.collectForTournament(s.sofascore_tournament_id, s.sofascore_season_id);
-            await new Promise(r => setTimeout(r, 2000));
+        try {
+            await this.collectForTournament(s.unique_tournament_id, s.sofascore_season_id);
+        } catch (e) {
+            console.log(`   ⚠️ Failed: ${e.message}\n`);
         }
-        
-        await db.close();
+        await new Promise(r => setTimeout(r, 2000));
     }
+    
+    await db.close();
+}
 
     async collectForMatch(matchId) {
         await this.initialize();
