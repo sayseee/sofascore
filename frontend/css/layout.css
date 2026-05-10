@@ -1,0 +1,314 @@
+/* ============================================
+   Layout - Fixed body, scrolling panels
+   ============================================ */
+
+html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+#app {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Navbar */
+.navbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: var(--navbar-bg);
+    border-bottom: 1px solid var(--navbar-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    z-index: 1000;
+    backdrop-filter: blur(10px);
+}
+
+.nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.nav-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.nav-badge {
+    font-size: 10px;
+    font-weight: 700;
+    background: var(--gradient-accent);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.nav-tabs {
+    display: flex;
+    gap: 4px;
+}
+
+.nav-tab {
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    background: none;
+    text-decoration: none;
+}
+
+.nav-tab:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.nav-tab.active {
+    background: var(--accent-primary);
+    color: white;
+}
+
+.nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+/* Main Content */
+.main-content {
+    position: fixed;
+    top: 60px;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 20px;
+    scroll-behavior: smooth;
+}
+
+/* Panels */
+.panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 12px;
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    max-height: 600px;
+}
+
+.panel-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-primary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+    background: var(--card-header-bg);
+    border-radius: 12px 12px 0 0;
+}
+
+.panel-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.panel-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 16px 20px;
+}
+
+.panel-body.horizontal-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+}
+
+.panel-body.both-scroll {
+    overflow: auto;
+    padding: 0;
+}
+
+/* Stats Row */
+.stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-primary);
+    padding: 4px 0;
+}
+
+.stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 12px;
+    padding: 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.stat-card:hover {
+    border-color: var(--accent-primary);
+    box-shadow: var(--shadow-glow);
+}
+
+.stat-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 8px 0;
+}
+
+.stat-trend {
+    font-size: 12px;
+}
+
+.stat-trend.up { color: var(--accent-success); }
+
+/* Horizontal match row */
+.matches-horizontal-row {
+    display: inline-flex;
+    gap: 16px;
+    padding: 8px 4px;
+}
+
+.match-card-horizontal {
+    min-width: 320px;
+    max-width: 380px;
+    flex-shrink: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 12px;
+    padding: 16px;
+    cursor: pointer;
+    display: inline-block;
+    white-space: normal;
+    transition: all 0.2s;
+}
+
+.match-card-horizontal:hover {
+    border-color: var(--accent-primary);
+    box-shadow: var(--shadow-glow);
+}
+
+/* Data Tables */
+.data-table-container {
+    overflow: auto;
+    max-height: 500px;
+    border-radius: 0 0 12px 12px;
+}
+
+.data-table {
+    width: 100%;
+    min-width: 700px;
+    border-collapse: collapse;
+}
+
+.data-table th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-tertiary);
+    z-index: 2;
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid var(--border-primary);
+}
+
+.data-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-primary);
+    font-size: 13px;
+}
+
+.data-table tr:hover td {
+    background: var(--bg-hover);
+}
+
+.data-table .sticky-col {
+    position: sticky;
+    left: 0;
+    background: var(--bg-card);
+    z-index: 1;
+}
+
+.data-table tr:hover .sticky-col {
+    background: var(--bg-hover);
+}
+
+/* Splash Screen */
+.splash-screen {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    background: var(--bg-primary);
+}
+
+.splash-screen h1 {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.splash-screen p {
+    color: var(--text-tertiary);
+}
+
+.splash-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border-secondary);
+    border-top-color: var(--accent-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-top: 16px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .main-content { padding: 12px; }
+    .nav-tabs { overflow-x: auto; }
+    .nav-tab { padding: 6px 10px; font-size: 11px; }
+    .stats-row { position: relative; }
+    .match-card-horizontal { min-width: 260px; }
+    .panel { max-height: 400px; }
+}
+

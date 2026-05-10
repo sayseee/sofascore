@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment
+.env
+.env.local
+.env.production
+.env.development
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+backend/logs/
+var/log/
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Database
+*.sqlite
+*.db
+database/backups/
+
+# Build
+dist/
+build/
+.next/
+
+# Cache
+.cache/
+cache/
+tmp/
+temp/
+
+# Testing
+coverage/
+.nyc_output/
+
+# WAMP
+wamp/
+
+# Data exports
+*.csv
+exports/
+data/
+
+# Docker
+.docker/
+
