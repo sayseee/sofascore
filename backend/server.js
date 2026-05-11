@@ -47,6 +47,26 @@ class Server {
     }
 
     setupRoutes() {
+        // ✅ Add this root route
+        this.app.get('/', (req, res) => {
+            res.json({
+                name: 'Sofascore Analytics API',
+                version: '1.0.0',
+                status: 'running',
+                database: db.isConnected ? 'connected' : 'disconnected',
+                endpoints: {
+                    health: '/health',
+                    api: '/api',
+                    matches: '/api/matches',
+                    teams: '/api/teams',
+                    odds: '/api/odds',
+                    analytics: '/api/analytics',
+                    predictions: '/api/predictions'
+                },
+                timestamp: new Date().toISOString()
+            });
+        });
+
         this.app.get('/health', (req, res) => {
             res.json({
                 status: 'healthy',

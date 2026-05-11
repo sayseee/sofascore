@@ -1,51 +1,17 @@
 /* ============================================
-   Skeleton Loading States
+   Skeleton - Flat Loading States
+   No animations, no shimmer
    ============================================ */
 
 .skeleton {
-    position: relative;
-    overflow: hidden;
     background: var(--bg-tertiary);
-    border-radius: 8px;
-}
-
-.skeleton::after {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: linear-gradient(
-        90deg,
-        transparent 0%,
-        rgba(255, 255, 255, 0.03) 50%,
-        transparent 100%
-    );
-    animation: shimmer 1.5s infinite;
+    border-radius: 3px;
 }
 
 .skeleton-line {
-    height: 14px;
+    height: 10px;
     background: var(--bg-tertiary);
-    border-radius: 4px;
-    position: relative;
-    overflow: hidden;
-}
-
-.skeleton-line::after {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: linear-gradient(
-        90deg,
-        transparent 0%,
-        rgba(255, 255, 255, 0.03) 50%,
-        transparent 100%
-    );
-    animation: shimmer 1.5s infinite;
-}
-
-@keyframes shimmer {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(100%); }
+    border-radius: 2px;
 }
 
 .skeleton-line.w-20 { width: 20%; }
@@ -55,25 +21,41 @@
 .skeleton-line.w-60 { width: 60%; }
 .skeleton-line.w-80 { width: 80%; }
 .skeleton-line.w-100 { width: 100%; }
-.skeleton-line.mb-1 { margin-bottom: 8px; }
-.skeleton-line.mb-2 { margin-bottom: 12px; }
-.skeleton-line.mb-3 { margin-bottom: 16px; }
+.skeleton-line.mb-1 { margin-bottom: 4px; }
+.skeleton-line.mb-2 { margin-bottom: 6px; }
+.skeleton-line.mb-3 { margin-bottom: 8px; }
 
 .stat-card.skeleton {
-    padding: 20px;
-    height: 100px;
+    padding: 10px;
+    height: 60px;
 }
 
 .match-card-horizontal.skeleton {
-    min-width: 300px;
-    height: 160px;
-    padding: 16px;
+    min-width: 240px;
+    height: 80px;
+    padding: 8px;
 }
 
 .skeleton-panel {
     background: var(--bg-card);
     border: 1px solid var(--border-primary);
-    border-radius: 12px;
-    margin-bottom: 20px;
+    border-radius: 4px;
+    margin-bottom: 6px;
 }
 
+/* Data placeholder state */
+.data-placeholder {
+    opacity: 0.7;
+}
+
+.data-placeholder::before {
+    content: 'Loading...';
+    position: absolute;
+    top: 3px;
+    right: 6px;
+    font-size: 9px;
+    color: var(--text-tertiary);
+    background: var(--bg-tertiary);
+    padding: 1px 5px;
+    border-radius: 2px;
+}

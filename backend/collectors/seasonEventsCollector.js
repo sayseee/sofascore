@@ -62,12 +62,16 @@ class SeasonEventsCollector {
     }
 
     async processEvent(event, dbTournamentId, dbSeasonId) {
-        // Upsert home team
+        // 1. Upsert home team
         let homeTeamId = null;
         if (event.homeTeam?.id) {
-            const existing = await db.query('SELECT id FROM teams WHERE sofascore_team_id = ?', [event.homeTeam.id]);
+            const existing = await db.query(
+                'SELECT id FROM teams WHERE sofascore_team_id = ?', 
+                [event.homeTeam.id]
+            );
             if (existing.length > 0) {
                 homeTeamId = existing[0].id;
+                this.stats.teams.updated++;
             } else {
                 const result = await db.query(
                     `INSERT INTO teams (sofascore_team_id, name, short_name, slug, country, country_code)
@@ -86,12 +90,16 @@ class SeasonEventsCollector {
             }
         }
 
-        // Upsert away team
+        // 2. Upsert away team
         let awayTeamId = null;
         if (event.awayTeam?.id) {
-            const existing = await db.query('SELECT id FROM teams WHERE sofascore_team_id = ?', [event.awayTeam.id]);
+            const existing = await db.query(
+                'SELECT id FROM teams WHERE sofascore_team_id = ?', 
+                [event.awayTeam.id]
+            );
             if (existing.length > 0) {
                 awayTeamId = existing[0].id;
+                this.stats.teams.updated++;
             } else {
                 const result = await db.query(
                     `INSERT INTO teams (sofascore_team_id, name, short_name, slug, country, country_code)
@@ -112,42 +120,103 @@ class SeasonEventsCollector {
 
         if (!homeTeamId || !awayTeamId) return;
 
-        // Upsert match
-        const matchDateTime = event.startTimestamp ? new Date(event.startTimestamp * 1000) : null;
-        const matchDate = matchDateTime ? matchDateTime.toISOString().split('T')[0] : null;
+        // 3. ⚡ Extract unique_tournament_id from event
+        const uniqueTournamentId = event.tournament?.uniqueTournament?.id || null;
 
-        const existing = await db.query('SELECT id FROM matches WHERE sofascore_match_id = ?', [event.id]);
+        // 4. Parse match data
+        const matchDateTime = event.startTimestamp 
+            ? new Date(event.startTimestamp * 1000) 
+            : null;
+        const matchDate = matchDateTime 
+            ? matchDateTime.toISOString().split('T')[0] 
+            : null;
 
-        const matchData = {
-            tournament_id: dbTournamentId,
-            season_id: dbSeasonId,
-            home_team_id: homeTeamId,
-            away_team_id: awayTeamId,
-            match_date: matchDate,
-            match_datetime: matchDateTime,
-            status: event.status?.code || 0,
-            status_description: event.status?.description || null,
-            round_info: event.roundInfo?.round ? `Round ${event.roundInfo.round}` : null,
-            home_score: event.homeScore?.current ?? null,
-            away_score: event.awayScore?.current ?? null,
-            home_score_halftime: event.homeScore?.period1 ?? null,
-            away_score_halftime: event.awayScore?.period1 ?? null,
-            custom_id: event.customId || null
-        };
+        // 5. Check if match already exists
+        const existing = await db.query(
+            'SELECT id FROM matches WHERE sofascore_match_id = ?', 
+            [event.id]
+        );
 
         if (existing.length > 0) {
-            const sets = Object.keys(matchData).map(k => `${k} = ?`).join(', ');
+            // ⚡ UPDATE - include unique_tournament_id
             await db.query(
-                `UPDATE matches SET ${sets}, updated_at = NOW() WHERE id = ?`,
-                [...Object.values(matchData), existing[0].id]
+                `UPDATE matches SET
+                    tournament_id = ?,
+                    unique_tournament_id = ?,
+                    season_id = ?,
+                    home_team_id = ?,
+                    away_team_id = ?,
+                    match_date = ?,
+                    match_datetime = ?,
+                    status = ?,
+                    status_description = ?,
+                    round_info = ?,
+                    home_score = ?,
+                    away_score = ?,
+                    home_score_halftime = ?,
+                    away_score_halftime = ?,
+                    custom_id = COALESCE(custom_id, ?),
+                    updated_at = NOW()
+                WHERE id = ?`,
+                [
+                    dbTournamentId,
+                    uniqueTournamentId,          // ⚡ unique_tournament_id
+                    dbSeasonId,
+                    homeTeamId,
+                    awayTeamId,
+                    matchDate,
+                    matchDateTime,
+                    event.status?.code || 0,
+                    event.status?.description || null,
+                    event.roundInfo?.round ? `Round ${event.roundInfo.round}` : null,
+                    event.homeScore?.current ?? null,
+                    event.awayScore?.current ?? null,
+                    event.homeScore?.period1 ?? null,
+                    event.awayScore?.period1 ?? null,
+                    event.customId || null,
+                    existing[0].id
+                ]
             );
             this.stats.matches.updated++;
         } else {
-            const cols = Object.keys(matchData).join(', ');
-            const placeholders = Object.keys(matchData).map(() => '?').join(', ');
+            // ⚡ INSERT - include unique_tournament_id
             await db.query(
-                `INSERT INTO matches (sofascore_match_id, ${cols}) VALUES (?, ${placeholders})`,
-                [event.id, ...Object.values(matchData)]
+                `INSERT INTO matches (
+                    sofascore_match_id,
+                    custom_id,
+                    tournament_id,
+                    unique_tournament_id,
+                    season_id,
+                    home_team_id,
+                    away_team_id,
+                    match_date,
+                    match_datetime,
+                    status,
+                    status_description,
+                    round_info,
+                    home_score,
+                    away_score,
+                    home_score_halftime,
+                    away_score_halftime
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    event.id,
+                    event.customId || null,
+                    dbTournamentId,
+                    uniqueTournamentId,          // ⚡ unique_tournament_id
+                    dbSeasonId,
+                    homeTeamId,
+                    awayTeamId,
+                    matchDate,
+                    matchDateTime,
+                    event.status?.code || 0,
+                    event.status?.description || null,
+                    event.roundInfo?.round ? `Round ${event.roundInfo.round}` : null,
+                    event.homeScore?.current ?? null,
+                    event.awayScore?.current ?? null,
+                    event.homeScore?.period1 ?? null,
+                    event.awayScore?.period1 ?? null
+                ]
             );
             this.stats.matches.inserted++;
         }

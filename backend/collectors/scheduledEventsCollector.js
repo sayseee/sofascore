@@ -237,7 +237,6 @@ class ScheduledEventsCollector {
      * Upsert Match - The core function that saves match data
      */
     async upsertMatch(event, tournamentId, seasonId, homeTeamId, awayTeamId) {
-        // Parse match date/time from timestamp
         const matchDateTime = event.startTimestamp 
             ? new Date(event.startTimestamp * 1000)
             : null;
@@ -245,22 +244,21 @@ class ScheduledEventsCollector {
             ? matchDateTime.toISOString().split('T')[0]
             : null;
 
-        // Current scores (may be null for scheduled matches)
         const homeScore = event.homeScore?.current ?? null;
         const awayScore = event.awayScore?.current ?? null;
         const homeScoreHT = event.homeScore?.period1 ?? null;
         const awayScoreHT = event.awayScore?.period1 ?? null;
 
-        // Status
-        const status = event.status?.code || 'scheduled';
+        const status = event.status?.code || 0;
         const statusDesc = event.status?.description || null;
 
-        // Round info
         const roundInfo = event.roundInfo?.round 
             ? `Round ${event.roundInfo.round}` 
             : null;
 
-        // Check if match already exists
+        // ⚡ Get unique_tournament_id from the event
+        const uniqueTournamentId = event.tournament?.uniqueTournament?.id || null;
+
         const existing = await db.query(
             'SELECT id, status, home_score, away_score FROM matches WHERE sofascore_match_id = ?',
             [event.id]
@@ -268,8 +266,6 @@ class ScheduledEventsCollector {
 
         if (existing.length > 0) {
             const current = existing[0];
-            
-            // Only update if status changed or scores changed
             const statusChanged = current.status !== status;
             const scoreChanged = current.home_score !== homeScore || current.away_score !== awayScore;
             
@@ -277,6 +273,7 @@ class ScheduledEventsCollector {
                 await db.query(
                     `UPDATE matches SET
                     tournament_id = ?, season_id = ?, home_team_id = ?, away_team_id = ?,
+                    unique_tournament_id = ?,
                     match_date = ?, match_datetime = ?, status = ?, status_description = ?,
                     round_info = ?, home_score = ?, away_score = ?,
                     home_score_halftime = ?, away_score_halftime = ?,
@@ -285,6 +282,7 @@ class ScheduledEventsCollector {
                     WHERE id = ?`,
                     [
                         tournamentId, seasonId, homeTeamId, awayTeamId,
+                        uniqueTournamentId,
                         matchDate, matchDateTime, status, statusDesc,
                         roundInfo, homeScore, awayScore,
                         homeScoreHT, awayScoreHT,
@@ -293,25 +291,20 @@ class ScheduledEventsCollector {
                     ]
                 );
                 this.stats.matches.updated++;
-                
-                if (scoreChanged) {
-                    console.log(`    🔄 Updated: ${event.homeTeam?.name || '?'} ${homeScore}-${awayScore} ${event.awayTeam?.name || '?'} (${status})`);
-                }
             }
-            // If no changes, don't count as updated
         } else {
-            // Insert new match
             await db.query(
                 `INSERT INTO matches 
-                (sofascore_match_id, custom_id, tournament_id, season_id,
-                 home_team_id, away_team_id, match_date, match_datetime,
-                 status, status_description, round_info,
-                 home_score, away_score, home_score_halftime, away_score_halftime)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                (sofascore_match_id, custom_id, tournament_id, unique_tournament_id, season_id,
+                home_team_id, away_team_id, match_date, match_datetime,
+                status, status_description, round_info,
+                home_score, away_score, home_score_halftime, away_score_halftime)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     event.id,
                     event.customId || null,
                     tournamentId,
+                    uniqueTournamentId,
                     seasonId,
                     homeTeamId,
                     awayTeamId,
@@ -327,8 +320,6 @@ class ScheduledEventsCollector {
                 ]
             );
             this.stats.matches.inserted++;
-            
-            console.log(`    ➕ Inserted: ${event.homeTeam?.name || '?'} vs ${event.awayTeam?.name || '?'} (${matchDate})`);
         }
     }
 

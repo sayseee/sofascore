@@ -1,51 +1,62 @@
 /* ============================================
-   Dark Analytics Theme
+   Flat Dark Theme - bet365 Style
+   No shadows, no animations, compact layout
    ============================================ */
 
 :root[data-theme="dark"] {
-    --bg-primary: #0a0e17;
-    --bg-secondary: #111827;
-    --bg-tertiary: #1a2332;
-    --bg-card: #162032;
-    --bg-hover: #1e2d3d;
+    /* Base */
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #222222;
+    --bg-tertiary: #2a2a2a;
+    --bg-card: #252525;
+    --bg-hover: #2e2e2e;
+    --bg-header: #1e1e1e;
     
-    --text-primary: #e2e8f0;
-    --text-secondary: #94a3b8;
-    --text-tertiary: #64748b;
-    --text-accent: #60a5fa;
+    /* Text */
+    --text-primary: #e8e8e8;
+    --text-secondary: #b0b0b0;
+    --text-tertiary: #777777;
+    --text-accent: #ffd700;
     
-    --accent-primary: #3b82f6;
-    --accent-secondary: #2563eb;
-    --accent-success: #10b981;
-    --accent-danger: #ef4444;
-    --accent-warning: #f59e0b;
+    /* Accent - bet365 uses yellow/green */
+    --accent-primary: #ffd700;
+    --accent-secondary: #e6c200;
+    --accent-success: #00a854;
+    --accent-danger: #d9534f;
+    --accent-warning: #f0ad4e;
+    --accent-blue: #337ab7;
     --accent-purple: #8b5cf6;
     
-    --border-primary: #1e293b;
-    --border-secondary: #334155;
-    --border-accent: #3b82f6;
+    /* Borders */
+    --border-primary: #333333;
+    --border-secondary: #3a3a3a;
+    --border-accent: #ffd700;
     
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.5);
-    --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.15);
+    /* No shadows */
+    --shadow-sm: none;
+    --shadow-md: none;
+    --shadow-lg: none;
+    --shadow-glow: none;
     
-    --gradient-primary: linear-gradient(135deg, #1a2332 0%, #162032 100%);
-    --gradient-accent: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-    --gradient-success: linear-gradient(135deg, #059669 0%, #047857 100%);
-    --gradient-danger: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    /* Gradients - flat, no gradients */
+    --gradient-primary: none;
+    --gradient-accent: none;
+    --gradient-success: none;
+    --gradient-danger: none;
     
-    --navbar-bg: #0d1520;
-    --navbar-border: #1e293b;
-    --card-header-bg: #162032;
-    --input-bg: #1a2332;
-    --input-border: #334155;
-    --input-focus: #3b82f6;
+    /* Component */
+    --navbar-bg: #1a1a1a;
+    --navbar-border: #333333;
+    --card-header-bg: #1e1e1e;
+    --input-bg: #222222;
+    --input-border: #333333;
+    --input-focus: #ffd700;
     
-    --chart-grid: #1e293b;
-    --chart-line-1: #3b82f6;
-    --chart-line-2: #10b981;
-    --chart-line-3: #f59e0b;
+    /* Charts */
+    --chart-grid: #2a2a2a;
+    --chart-line-1: #ffd700;
+    --chart-line-2: #00a854;
+    --chart-line-3: #337ab7;
 }
 
 * {
@@ -55,11 +66,12 @@
 }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 12px;
     background: var(--bg-primary);
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.3;
 }
 
 a {
@@ -68,11 +80,11 @@ a {
 }
 
 a:hover {
-    color: var(--accent-primary);
+    text-decoration: underline;
 }
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: var(--bg-secondary); border-radius: 4px; }
-::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
-::-webkit-scrollbar-thumb:hover { background: var(--accent-primary); }
-
+/* Thin scrollbar - 3px */
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb { background: #444444; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #555555; }
