@@ -17,6 +17,7 @@ class App {
         console.log('⚽ Sofascore Analytics Initializing...');
         this.setupEventListeners();
         await this.loadMatches(this.currentDate);
+    await this.loadValueBets();  // ← Add this
         await this.loadSidebarData();
         console.log('✅ Ready');
     }
@@ -57,6 +58,11 @@ class App {
 
         document.getElementById('searchInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.filterMatches(e.target.value);
+        });
+
+        document.getElementById('modalClose').addEventListener('click', () => this.closeModal());
+        document.getElementById('matchModal').addEventListener('click', (e) => {
+            if (e.target === document.getElementById('matchModal')) this.closeModal();
         });
     }
 
@@ -113,13 +119,64 @@ async loadSidebarData() {
         try {
             const valueBetsRes = await this.apiClient.getValueBets();
             const valueBets = valueBetsRes.data || valueBetsRes || [];
-            document.getElementById('valueCount').textContent = `${valueBets.length} value bets`;
+            document.getElementById('valueCount').textContent = `${bets.length} value bets`;
         } catch (e) {}
     } catch (error) {
         console.error('Failed to load sidebar:', error);
     }
 }
+async loadValueBets() {
+    const container = document.getElementById('valueBetsContainer');
+    const countEl = document.getElementById('valueBetCount');
+    
+    if (!container) return;
+    
+    container.innerHTML = '<div class="loading-text">Loading value bets...</div>';
+    
+    try {
+        const res = await this.apiClient.getValueBets();
+        const bets = res.data || res || [];
+        
+        countEl.textContent = `${bets.length} bets`;
+        
+        if (bets.length === 0) {
+            container.innerHTML = '<div class="text-muted">No value bets found. Run winningOddsCollector first.</div>';
+            return;
+        }
 
+        container.innerHTML = bets.map(bet => {
+            const confidenceClass = bet.confidence_level === 'high' ? 'positive' : 
+                                   bet.confidence_level === 'medium' ? 'positive' : '';
+            return `
+                <div class="value-bet-mini" data-match-id="${bet.match_id}">
+                    <span style="flex:1;">
+                        <strong>${bet.home_team_name || '?'}</strong> vs ${bet.away_team_name || '?'}
+                    </span>
+                    <span style="font-size:9px;color:var(--text-tertiary);margin:0 6px;">
+                        ${bet.selection} @ ${bet.bookmaker_odds}
+                    </span>
+                    <span class="edge-badge ${confidenceClass}">
+                        ${bet.confidence_level?.toUpperCase() || 'LOW'}
+                    </span>
+                    <span class="edge-badge positive" style="margin-left:4px;">
+                        +${bet.edge_percentage}% EV
+                    </span>
+                </div>
+            `;
+        }).join('');
+
+        // Click handler
+        container.querySelectorAll('.value-bet-mini').forEach(el => {
+            el.addEventListener('click', () => {
+                const matchId = el.dataset.matchId;
+                this.openMatchModal(matchId);
+            });
+        });
+
+    } catch (error) {
+        container.innerHTML = '<div class="text-muted">Failed to load value bets</div>';
+    }
+}
     renderMatches(matches) {
         const tbody = document.getElementById('matchTableBody');
         
@@ -181,23 +238,127 @@ async loadSidebarData() {
         `;
     }
 
-    async selectMatch(matchId) {
-        this.selectedMatchId = matchId;
-        
-        document.querySelectorAll('#matchTableBody tr').forEach(row => {
-            row.classList.toggle('selected', row.dataset.matchId == matchId);
-        });
+    // Select match - load standings + detail
+async selectMatch(matchId) {
+    this.selectedMatchId = matchId;
+    
+    document.querySelectorAll('#matchTableBody tr').forEach(row => {
+        row.classList.toggle('selected', row.dataset.matchId == matchId);
+    });
 
-        const panel = document.getElementById('detailPanel');
-        panel.innerHTML = '<p class="loading-text">Loading...</p>';
-
-        try {
-            const match = await this.apiClient.getMatchById(matchId);
-            panel.innerHTML = this.renderMatchDetail(match);
-        } catch (error) {
-            panel.innerHTML = '<p class="loading-text">Failed to load details</p>';
-        }
+    // Load standings for this match's tournament
+    const match = this.matches.find(m => m.id == matchId);
+    if (match) {
+        this.loadStandings(match.tournament_id);
     }
+
+    // Show match detail in modal on double-click
+    document.querySelectorAll('#matchTableBody tr').forEach(row => {
+        row.ondblclick = () => this.openMatchModal(matchId);
+    });
+}
+
+async loadStandings(tournamentId) {
+    const content = document.getElementById('standingsContent');
+    content.innerHTML = '<p class="loading-text">Loading standings...</p>';
+    
+    try {
+        const res = await this.apiClient.get('/analytics/standings', { tournamentId });
+        const standings = res.data || [];
+        
+        if (standings.length === 0) {
+            content.innerHTML = '<p class="text-muted">No standings available</p>';
+            return;
+        }
+
+        content.innerHTML = `
+            <table class="standings-table">
+                <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
+                <tbody>
+                    ${standings.map(s => `
+                        <tr>
+                            <td>${s.position}</td>
+                            <td>${s.team_name}</td>
+                            <td>${s.matches_played}</td>
+                            <td>${s.wins}</td>
+                            <td>${s.draws}</td>
+                            <td>${s.losses}</td>
+                            <td>${s.goal_difference > 0 ? '+' : ''}${s.goal_difference}</td>
+                            <td><strong>${s.points}</strong></td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (e) {
+        content.innerHTML = '<p class="text-muted">Failed to load standings</p>';
+    }
+}
+
+async openMatchModal(matchId) {
+    const modal = document.getElementById('matchModal');
+    const body = document.getElementById('modalBody');
+    
+    modal.style.display = 'flex';
+    body.innerHTML = '<div class="loading-text">Loading analysis...</div>';
+
+    try {
+        const match = await this.apiClient.getMatchById(matchId);
+        const h2h = await this.apiClient.getH2HComparison(match.home_team_id, match.away_team_id);
+        
+        document.getElementById('modalTitle').textContent = 
+            `${match.home_team_name} vs ${match.away_team_name}`;
+        
+        body.innerHTML = this.renderMatchAnalysis(match, h2h);
+    } catch (e) {
+        body.innerHTML = '<p class="loading-text">Failed to load analysis</p>';
+    }
+}
+
+renderMatchAnalysis(match, h2h) {
+    return `
+        <div class="analysis-grid">
+            <div class="analysis-section">
+                <h4>📊 Match Info</h4>
+                <p>🏆 ${match.tournament_name || 'N/A'}</p>
+                <p>📅 ${match.match_date}</p>
+                <p>🏟️ ${match.venue_name || 'TBD'}</p>
+                <p>Status: ${match.status_description || match.status}</p>
+                ${match.home_score !== null ? 
+                    `<p style="font-size:24px;text-align:center;margin:12px 0;">
+                        ${match.home_score} - ${match.away_score}
+                    </p>` : ''}
+            </div>
+            
+            <div class="analysis-section">
+                <h4>🎲 Match Odds</h4>
+                ${match.odds && match.odds.length > 0 ? 
+                    match.odds.filter(o => o.market_group === '1X2').map(o => `
+                        <div style="display:flex;justify-content:space-between;padding:3px 0;">
+                            <span>${o.selection_name}</span>
+                            <span style="font-weight:600;">${o.decimal_odds}</span>
+                        </div>
+                    `).join('') : '<p class="text-muted">No odds available</p>'}
+            </div>
+            
+            <div class="analysis-section">
+                <h4>⚔️ H2H Record</h4>
+                ${h2h && h2h.matches ? `
+                    <p>Last ${h2h.matches.length} meetings:</p>
+                    ${h2h.matches.slice(0, 5).map(h => `
+                        <div style="font-size:10px;padding:2px 0;">
+                            ${h.match_date}: ${h.home_score}-${h.away_score}
+                        </div>
+                    `).join('')}
+                ` : '<p class="text-muted">No H2H data</p>'}
+            </div>
+        </div>
+    `;
+}
+
+closeModal() {
+    document.getElementById('matchModal').style.display = 'none';
+}
 
     renderMatchDetail(match) {
         if (!match) return '<p>Match not found</p>';

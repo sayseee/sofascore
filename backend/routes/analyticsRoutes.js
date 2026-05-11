@@ -8,6 +8,7 @@ router.get('/match/:matchId/analysis', ctrl.getMatchAnalysis);
 router.get('/h2h', ctrl.getH2HComparison);
 router.get('/value-bets', ctrl.getValueBets);
 router.get('/summary', ctrl.getDashboardSummary);
+router.get('/standings', ctrl.getStandings);
 
 module.exports = router;
 

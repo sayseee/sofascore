@@ -47,8 +47,9 @@ class ScheduledEventsCollector {
             const endpoint = SOFASCORE_CONFIG.ENDPOINTS.SCHEDULED_EVENTS(date);
             console.log(`🌐 Fetching: ${SOFASCORE_CONFIG.BASE_URL}${endpoint}`);
             
-            const data = await httpClient.get(endpoint);
 
+            const data = await httpClient.get(endpoint);
+             
             if (!data || !data.events || data.events.length === 0) {
                 console.log(`⚠️  No events found for ${date}`);
                 return this.summarize(startTime);
@@ -437,39 +438,42 @@ class ScheduledEventsCollector {
 }
 
 // CLI Entry Point
+// CLI Entry Point
 if (require.main === module) {
     const collector = new ScheduledEventsCollector();
     const args = process.argv.slice(2);
 
     (async () => {
         try {
-            if (args.includes('--days')) {
-                // Collect next N days
+            // ⚡ Check for flags properly
+            if (args.includes('--range') && args.length >= 4) {
+                const rangeIndex = args.indexOf('--range');
+                const startDate = args[rangeIndex + 1];
+                const endDate = args[rangeIndex + 2];
+                console.log(`\n📅 Collecting matches from ${startDate} to ${endDate}\n`);
+                const results = await collector.collectDateRange(startDate, endDate);
+                console.log('\n✅ Range collection complete!');
+                console.log(`   ${results.length} days processed`);
+                
+            } else if (args.includes('--days')) {
                 const daysIndex = args.indexOf('--days');
                 const days = parseInt(args[daysIndex + 1]) || 7;
                 console.log(`\n📅 Collecting matches for next ${days} days...\n`);
                 const results = await collector.collectNextDays(days);
                 console.log('\n✅ Multi-day collection complete!');
                 console.log(`   ${results.length} days processed`);
-            } 
-            else if (args.includes('--range') && args.length >= 4) {
-                // Collect date range
-                const rangeIndex = args.indexOf('--range');
-                const startDate = args[rangeIndex + 1];
-                const endDate = args[rangeIndex + 2];
-                const results = await collector.collectDateRange(startDate, endDate);
-                console.log('\n✅ Range collection complete!');
-            }
-            else if (args.includes('--today')) {
-                // Force today
+                
+            } else if (args.includes('--today')) {
                 const today = new Date().toISOString().split('T')[0];
+                console.log(`\n📅 Collecting matches for today: ${today}\n`);
                 await collector.collectForDate(today);
-            }
-            else if (args[0] && args[0].match(/^\d{4}-\d{2}-\d{2}$/)) {
-                // Specific date provided
+                
+            } else if (args[0] && args[0].match(/^\d{4}-\d{2}-\d{2}$/)) {
+                // Specific date like 2026-05-10
+                console.log(`\n📅 Collecting matches for: ${args[0]}\n`);
                 await collector.collectForDate(args[0]);
-            }
-            else {
+                
+            } else {
                 // Default: collect today
                 const today = new Date().toISOString().split('T')[0];
                 console.log(`📅 No date specified, collecting for today: ${today}`);

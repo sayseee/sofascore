@@ -65,7 +65,7 @@ class OddsCollector {
             const endpoint = `/sport/football/odds/1/${date}`;
             console.log(`🌐 Endpoint: ${endpoint}\n`);
 
-            const response = await httpClient.get(endpoint, true);
+            const response = await httpClient.get(endpoint);
 
             if (!response || !response.odds) {
                 console.log('⚠️  No odds data');

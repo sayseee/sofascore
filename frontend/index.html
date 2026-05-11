@@ -53,6 +53,7 @@
         </div>
 
         <!-- Main Layout -->
+        <!-- Main Layout -->
         <div class="app-layout">
             <!-- Left Panel - Filters & Search -->
             <aside class="sidebar">
@@ -69,63 +70,77 @@
                         </label>
                     </div>
                 </div>
-
-                <div class="sidebar-section">
-                    <h3>📊 Odds Markets</h3>
-                    <div class="filter-list">
-                        <label class="filter-item active">
-                            <input type="radio" name="oddsMarket" value="1X2" checked> 1X2 (Full Time)
-                        </label>
-                        <label class="filter-item">
-                            <input type="radio" name="oddsMarket" value="btts"> Both Teams to Score
-                        </label>
-                        <label class="filter-item">
-                            <input type="radio" name="oddsMarket" value="over_under_2.5"> Over/Under 2.5
-                        </label>
-                    </div>
-                </div>
-
-                <div class="sidebar-section">
-                    <h3>💎 Value Bets</h3>
-                    <div id="sidebarValueBets">
-                        <p class="text-muted">Loading...</p>
-                    </div>
-                </div>
             </aside>
 
-            <!-- Main Content - Scheduled Matches -->
+            <!-- Main Content -->
             <main class="main-area">
-                <!-- Match Table -->
-                <div class="match-table-container">
-                    <table class="match-table" id="matchTable">
-                        <thead>
-                            <tr>
-                                <th class="col-time">Time</th>
-                                <th class="col-home">Home</th>
-                                <th class="col-score">Score</th>
-                                <th class="col-away">Away</th>
-                                <th class="col-tournament">Tournament</th>
-                                <th class="col-odds">1</th>
-                                <th class="col-odds">X</th>
-                                <th class="col-odds">2</th>
-                                <th class="col-edge">Edge</th>
-                            </tr>
-                        </thead>
-                        <tbody id="matchTableBody">
-                            <tr>
-                                <td colspan="9" class="loading-text">Loading matches...</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <!-- Row 1: Scheduled Events -->
+                <div class="content-row">
+                    <div class="row-header">
+                        <span class="row-label">📅 SCHEDULED EVENTS</span>
+                        <span class="row-date" id="statusDate">2026-05-10</span>
+                        <span class="status-filter">
+                            <button class="filter-btn active" data-filter="all">All</button>
+                            <button class="filter-btn" data-filter="scheduled">Scheduled</button>
+                            <button class="filter-btn" data-filter="live">Live</button>
+                            <button class="filter-btn" data-filter="finished">Finished</button>
+                        </span>
+                    </div>
+                    <div class="match-table-container">
+                        <table class="match-table" id="matchTable">
+                            <thead>
+                                <tr>
+                                    <th>Time</th><th>Home</th><th></th><th>Away</th>
+                                    <th>Tournament</th><th>1</th><th>X</th><th>2</th><th>Edge</th>
+                                </tr>
+                            </thead>
+                            <tbody id="matchTableBody">
+                                <tr><td colspan="9" class="loading-text">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Row 2: Top Value Bets -->
+                <div class="content-row" id="valueBetsRow">
+                    <div class="row-header">
+                        <span class="row-label">💎 TOP VALUE BETS (Winning Odds Edge)</span>
+                        <span id="valueBetCount" class="row-count">0 bets</span>
+                    </div>
+                    <div class="value-bets-scroll" id="valueBetsContainer">
+                        <div class="loading-text">Loading value bets...</div>
+                    </div>
                 </div>
             </main>
 
-            <!-- Right Panel - Match Detail & Insights -->
+            <!-- Right Panel - Standings -->
             <aside class="detail-panel" id="detailPanel">
-                <div class="detail-placeholder">
-                    <p>👈 Select a match to view details</p>
+                <div class="panel-section">
+                    <h4>🏆 STANDINGS</h4>
+                    <div id="standingsContent">
+                        <p class="text-muted">Select a match to view standings</p>
+                    </div>
+                </div>
+                <div class="panel-section">
+                    <h4>📊 MATCH DETAIL</h4>
+                    <div id="matchDetailContent">
+                        <p class="text-muted">Click a match for details</p>
+                    </div>
                 </div>
             </aside>
+        </div>
+
+        <!-- Match Detail Modal -->
+        <div class="modal-overlay" id="matchModal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="modalTitle">Match Analysis</h3>
+                    <button class="modal-close" id="modalClose">&times;</button>
+                </div>
+                <div class="modal-body" id="modalBody">
+                    <div class="loading-text">Loading analysis...</div>
+                </div>
+            </div>
         </div>
     </div>
 
