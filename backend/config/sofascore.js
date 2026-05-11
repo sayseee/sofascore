@@ -2,7 +2,7 @@
  * Sofascore API Configuration
  */
 module.exports = {
-    BASE_URL: 'https://www.sofascore.com/api/v1',
+    BASE_URL: 'https://api.sofascore.com/api/v1',
     WEB_BASE_URL: 'https://www.sofascore.com/api/v1',
 
     ENDPOINTS: {

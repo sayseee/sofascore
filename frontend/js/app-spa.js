@@ -1,242 +1,261 @@
 /**
- * Sofascore Analytics - SPA Application
- * Main entry point with routing
+ * Sofascore Analytics - Scheduled Events with Odds & Winning Odds
  */
-
-import Router from './router.js';
-import Dashboard from './modules/dashboard.js';
-import LiveMatches from './modules/live-matches.js';
-import Predictions from './modules/predictions.js';
-import BettingIntelligence from './modules/betting-intelligence.js';
-import OddsDashboard from './modules/odds-dashboard.js';
-import H2HComparison from './modules/h2h-comparison.js';
-import AIAssistant from './modules/ai-assistant.js';
 import ApiClient from './api-client.js';
-import AutoRefresh from './utils/auto-refresh.js';
-import DataPreloader from './services/data-preloader.js';
-import SkeletonLoader from './components/skeleton-loader.js';
 
 class App {
     constructor() {
-        // ⚡ FIXED: Point to backend API
         this.apiClient = new ApiClient('http://localhost:3000/api');
-        this.router = new Router();
-        this.autoRefresh = new AutoRefresh(30);
-        this.preloader = DataPreloader;
-        this.modules = {};
-        this.currentState = {};
+        this.currentDate = new Date().toISOString().split('T')[0];
+        this.matches = [];
+        this.selectedMatchId = null;
         
         this.init();
     }
 
     async init() {
-        console.log('⚽ Sofascore Analytics SPA Initializing...');
+        console.log('⚽ Sofascore Analytics Initializing...');
+        this.setupEventListeners();
+        await this.loadMatches(this.currentDate);
+        await this.loadSidebarData();
+        console.log('✅ Ready');
+    }
+
+    setupEventListeners() {
+        document.getElementById('datePicker').value = this.currentDate;
         
-        this.initModules();
-        this.setupRoutes();
-        this.renderNavigation();
-        this.router.start();
-        this.startLiveUpdates();
-        this.modules.aiAssistant.init();
-        
-        console.log('✅ SPA Ready');
-    }
-
-    initModules() {
-        this.modules = {
-            dashboard: new Dashboard(this.apiClient),
-            liveMatches: new LiveMatches(this.apiClient),
-            predictions: new Predictions(this.apiClient),
-            bettingIntelligence: new BettingIntelligence(this.apiClient),
-            oddsDashboard: new OddsDashboard(this.apiClient),
-            h2hComparison: new H2HComparison(this.apiClient),
-            aiAssistant: new AIAssistant(this.apiClient)
-        };
-    }
-
-    setupRoutes() {
-        this.router.addRoute('/', () => this.renderDashboard());
-        this.router.addRoute('/dashboard', () => this.renderDashboard());
-        this.router.addRoute('/live', () => this.renderLiveMatches());
-        this.router.addRoute('/upcoming', () => this.renderUpcomingMatches());
-        this.router.addRoute('/odds', () => this.renderOdds());
-        this.router.addRoute('/h2h', () => this.renderH2H());
-        this.router.addRoute('/predictions', () => this.renderPredictions());
-        this.router.addRoute('/betting', () => this.renderBetting());
-        this.router.addRoute('/match/:id', (p) => this.renderMatchDetail(p.id));
-        this.router.setNotFound(() => this.render404());
-    }
-
-    renderNavigation() {
-        const app = document.getElementById('app');
-        app.innerHTML = `
-            <nav class="navbar">
-                <div class="nav-brand">
-                    <a href="/" data-link>
-                        <span class="nav-title">⚽ Sofascore Analytics</span>
-                        <span class="nav-badge">AI</span>
-                    </a>
-                </div>
-                <div class="nav-tabs">
-                    <a href="/dashboard" class="nav-tab" data-link>📊 Dashboard</a>
-                    <a href="/live" class="nav-tab" data-link>🔴 Live</a>
-                    <a href="/upcoming" class="nav-tab" data-link>📅 Upcoming</a>
-                    <a href="/odds" class="nav-tab" data-link>🎲 Odds</a>
-                    <a href="/h2h" class="nav-tab" data-link>⚔️ H2H</a>
-                    <a href="/predictions" class="nav-tab" data-link>🤖 Predictions</a>
-                    <a href="/betting" class="nav-tab" data-link>💎 Value Bets</a>
-                </div>
-                <div class="nav-actions">
-                    <span class="auto-refresh-indicator">
-                        <span class="loading-dot"></span> Auto-refresh
-                    </span>
-                    <button class="btn-icon" id="refreshBtn" title="Refresh">🔄</button>
-                </div>
-            </nav>
-            <main class="main-content" id="main-content"></main>
-            <div id="aiAssistantContainer"></div>
-        `;
+        document.getElementById('loadDateBtn').addEventListener('click', () => {
+            this.currentDate = document.getElementById('datePicker').value;
+            this.loadMatches(this.currentDate);
+        });
 
         document.getElementById('refreshBtn').addEventListener('click', () => {
-            const btn = document.getElementById('refreshBtn');
-            btn.style.animation = 'spin 0.5s linear';
-            this.router.navigate(window.location.pathname);
-            setTimeout(() => btn.style.animation = '', 500);
+            this.loadMatches(this.currentDate);
         });
 
-        this.highlightActiveNav();
-        window.addEventListener('popstate', () => this.highlightActiveNav());
-    }
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            this.filterMatches(e.target.value);
+        });
 
-    highlightActiveNav() {
-        const path = window.location.pathname;
-        document.querySelectorAll('.nav-tab').forEach(tab => {
-            const href = tab.getAttribute('href');
-            tab.classList.toggle('active', path.startsWith(href) && href !== '/');
+        document.querySelectorAll('input[name="status"]').forEach(radio => {
+            radio.addEventListener('change', () => this.filterMatches(this.getSearchTerm()));
+        });
+
+        document.querySelectorAll('input[name="tournament"]').forEach(radio => {
+            radio.addEventListener('change', () => this.filterMatches(this.getSearchTerm()));
+        });
+
+        document.getElementById('searchInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.filterMatches(e.target.value);
         });
     }
 
-    async renderDashboard() {
-        const main = document.getElementById('main-content');
-        main.innerHTML = SkeletonLoader.dashboard();
+    getSearchTerm() {
+        return document.getElementById('searchInput').value;
+    }
+
+    /**
+     * Load matches with odds and winning odds in ONE call
+     */
+    async loadMatches(date) {
+    const tbody = document.getElementById('matchTableBody');
+    tbody.innerHTML = '<tr><td colspan="10" class="loading-text">Loading matches...</td></tr>';
+
+    try {
+        const response = await this.apiClient.get('/matches/with-odds', { date });
+        // ⚡ FIX: Extract data from response
+        this.matches = response.data || response || [];
+        
+        document.getElementById('matchCount').textContent = `${this.matches.length} matches`;
+        document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+        
+        this.renderMatches(this.matches);
+    } catch (error) {
+        console.error('Failed to load matches:', error);
+        tbody.innerHTML = '<tr><td colspan="10" class="loading-text">Failed to load matches</td></tr>';
+    }
+}
+
+async loadSidebarData() {
+    try {
+        const response = await this.apiClient.get('/matches/with-odds', { date: this.currentDate });
+        // ⚡ FIX: Extract data from response
+        const matches = response.data || response || [];
+        
+        const uniqueTournaments = [...new Set(matches.map(m => m.tournament).filter(Boolean))];
+        
+        const filterDiv = document.getElementById('tournamentFilters');
+        filterDiv.innerHTML = `
+            <label class="filter-item active">
+                <input type="radio" name="tournament" value="all" checked> All
+            </label>
+            ${uniqueTournaments.map(t => `
+                <label class="filter-item">
+                    <input type="radio" name="tournament" value="${t}"> ${t}
+                </label>
+            `).join('')}
+        `;
+
+        document.querySelectorAll('input[name="tournament"]').forEach(radio => {
+            radio.addEventListener('change', () => this.filterMatches(this.getSearchTerm()));
+        });
 
         try {
-            const cached = this.preloader.getCachedData();
-            if (cached) {
-                main.innerHTML = this.modules.dashboard.renderWithCache(cached);
+            const valueBetsRes = await this.apiClient.getValueBets();
+            const valueBets = valueBetsRes.data || valueBetsRes || [];
+            document.getElementById('valueCount').textContent = `${valueBets.length} value bets`;
+        } catch (e) {}
+    } catch (error) {
+        console.error('Failed to load sidebar:', error);
+    }
+}
+
+    renderMatches(matches) {
+        const tbody = document.getElementById('matchTableBody');
+        
+        if (matches.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="10" class="loading-text">No matches found for this date</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = matches.map(match => this.createMatchRow(match)).join('');
+
+        tbody.querySelectorAll('tr').forEach(row => {
+            row.addEventListener('click', () => {
+                const matchId = row.dataset.matchId;
+                this.selectMatch(matchId);
+            });
+        });
+    }
+
+    createMatchRow(match) {
+        const time = match.match_datetime 
+            ? new Date(match.match_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : '--:--';
+        
+        const statusClass = [6, 7, 31, 32, 33].includes(match.status) ? 'live' : 
+                           [100, 101, 102].includes(match.status) ? 'finished' : 'scheduled';
+        
+        // ⚡ Odds with fallback
+        const oddsHome = match.odds_home ? Number(match.odds_home).toFixed(2) : '-';
+        const oddsDraw = match.odds_draw ? Number(match.odds_draw).toFixed(2) : '-';
+        const oddsAway = match.odds_away ? Number(match.odds_away).toFixed(2) : '-';
+
+        // ⚡ Winning odds edge
+        let edgeHtml = '-';
+        if (match.home_edge_percentage !== null && match.home_edge_percentage !== undefined) {
+            const edge = parseFloat(match.home_edge_percentage);
+            if (edge > 2) {
+                edgeHtml = `<span class="edge-positive">H+${edge}%</span>`;
+            } else if (match.away_edge_percentage > 2) {
+                edgeHtml = `<span class="edge-positive">A+${match.away_edge_percentage}%</span>`;
+            } else if (edge < -5) {
+                edgeHtml = `<span class="edge-negative">${edge}%</span>`;
             }
-
-            const fresh = await this.modules.dashboard.fetchDashboardData();
-            main.innerHTML = this.modules.dashboard.render(fresh);
-            this.preloader.setCachedData(fresh);
-
-        } catch (error) {
-            console.error('Dashboard error:', error);
-            main.innerHTML = '<div class="error-state"><p>Failed to load dashboard</p><a href="/" class="btn" data-link>Retry</a></div>';
         }
+
+        return `
+            <tr data-match-id="${match.id}" class="${match.id === this.selectedMatchId ? 'selected' : ''}">
+                <td><span class="tag ${statusClass}">${time}</span></td>
+                <td class="team-cell">${match.home_team || 'Home'}</td>
+                <td class="score-cell">
+                    ${match.home_score !== null ? `${match.home_score} - ${match.away_score}` : 'vs'}
+                </td>
+                <td class="team-cell">${match.away_team || 'Away'}</td>
+                <td style="font-size:10px;color:var(--text-tertiary);">${match.tournament || '-'}</td>
+                <td class="odds-cell">${oddsHome}</td>
+                <td class="odds-cell">${oddsDraw}</td>
+                <td class="odds-cell">${oddsAway}</td>
+                <td>${edgeHtml}</td>
+            </tr>
+        `;
     }
 
-    async renderLiveMatches() {
-        const main = document.getElementById('main-content');
-        main.innerHTML = SkeletonLoader.liveMatches();
+    async selectMatch(matchId) {
+        this.selectedMatchId = matchId;
         
-        try {
-            const matches = await this.apiClient.getLiveMatches();
-            main.innerHTML = this.modules.liveMatches.render(matches);
-        } catch (error) {
-            main.innerHTML = '<div class="error-state"><p>Failed to load live matches</p></div>';
-        }
-    }
+        document.querySelectorAll('#matchTableBody tr').forEach(row => {
+            row.classList.toggle('selected', row.dataset.matchId == matchId);
+        });
 
-    async renderUpcomingMatches() {
-        const main = document.getElementById('main-content');
-        main.innerHTML = '<div class="loading">Loading upcoming matches...</div>';
-        
-        try {
-            const matches = await this.apiClient.getUpcomingMatches(7);
-            main.innerHTML = this.modules.liveMatches.renderUpcoming(matches);
-        } catch (error) {
-            main.innerHTML = '<div class="error-state"><p>Failed to load matches</p></div>';
-        }
-    }
+        const panel = document.getElementById('detailPanel');
+        panel.innerHTML = '<p class="loading-text">Loading...</p>';
 
-    async renderOdds() {
-        const main = document.getElementById('main-content');
-        main.innerHTML = '<div class="loading">Loading odds...</div>';
-        
-        try {
-            const edges = await this.apiClient.get('/odds/winning/edges');
-            main.innerHTML = this.modules.oddsDashboard.render(edges);
-        } catch (error) {
-            main.innerHTML = '<div class="error-state"><p>Failed to load odds</p></div>';
-        }
-    }
-
-    async renderH2H() {
-        const main = document.getElementById('main-content');
-        main.innerHTML = this.modules.h2hComparison.render();
-        this.modules.h2hComparison.init();
-    }
-
-    async renderPredictions() {
-        const main = document.getElementById('main-content');
-        main.innerHTML = '<div class="loading">Generating predictions...</div>';
-        
-        try {
-            const predictions = await this.apiClient.getUpcomingPredictions();
-            main.innerHTML = this.modules.predictions.render(predictions);
-        } catch (error) {
-            main.innerHTML = '<div class="error-state"><p>Failed to load predictions</p></div>';
-        }
-    }
-
-    async renderBetting() {
-        const main = document.getElementById('main-content');
-        main.innerHTML = '<div class="loading">Scanning for value bets...</div>';
-        
-        try {
-            const valueBets = await this.apiClient.getValueBets();
-            main.innerHTML = this.modules.bettingIntelligence.render(valueBets);
-        } catch (error) {
-            main.innerHTML = '<div class="error-state"><p>Failed to load value bets</p></div>';
-        }
-    }
-
-    async renderMatchDetail(matchId) {
-        const main = document.getElementById('main-content');
-        main.innerHTML = '<div class="loading">Loading match details...</div>';
-        
         try {
             const match = await this.apiClient.getMatchById(matchId);
-            main.innerHTML = `
-                <a href="/live" data-link style="display:block;margin-bottom:16px;">← Back</a>
-                ${this.modules.dashboard.renderMatchDetail(match)}
-            `;
+            panel.innerHTML = this.renderMatchDetail(match);
         } catch (error) {
-            main.innerHTML = '<div class="error-state"><p>Match not found</p></div>';
+            panel.innerHTML = '<p class="loading-text">Failed to load details</p>';
         }
     }
 
-    render404() {
-        document.getElementById('main-content').innerHTML = `
-            <div style="text-align:center;padding:80px 20px;">
-                <h1 style="font-size:72px;color:var(--text-tertiary);">404</h1>
-                <p style="margin:16px 0;">Page not found</p>
-                <a href="/" class="btn" data-link>Go to Dashboard</a>
+    renderMatchDetail(match) {
+        if (!match) return '<p>Match not found</p>';
+        
+        let oddsHtml = '';
+        if (match.odds && match.odds.length > 0) {
+            oddsHtml = `
+                <div style="margin-top:8px;">
+                    <h5 style="font-size:10px;color:var(--text-tertiary);margin:0 0 4px 0;">🎲 ODDS</h5>
+                    ${match.odds.filter(o => o.market_group === '1X2').map(o => `
+                        <div style="display:flex;justify-content:space-between;font-size:10px;padding:2px 0;">
+                            <span>${o.selection_name}</span>
+                            <span style="font-weight:600;">${o.decimal_odds}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+        
+        return `
+            <div style="padding:8px;">
+                <h4 style="margin:0 0 4px 0;font-size:12px;">${match.home_team_name} vs ${match.away_team_name}</h4>
+                <div style="font-size:10px;color:var(--text-tertiary);margin-bottom:6px;">
+                    ${match.tournament_name || ''} · ${match.match_date || ''}
+                </div>
+                ${[100, 101, 102].includes(match.status) ? `
+                    <div style="font-size:20px;font-weight:700;text-align:center;margin:6px 0;">
+                        ${match.home_score} - ${match.away_score}
+                    </div>
+                ` : ''}
+                <div style="font-size:10px;color:var(--text-tertiary);">
+                    Status: ${match.status_description || match.status || 'Unknown'}
+                </div>
+                ${oddsHtml}
             </div>
         `;
     }
 
-    startLiveUpdates() {
-        this.autoRefresh.start(async () => {
-            const path = window.location.pathname;
-            if (path === '/' || path === '/dashboard' || path === '/live') {
-                try {
-                    const matches = await this.apiClient.getLiveMatches();
-                    this.currentState.liveMatches = matches;
-                } catch (e) {}
+    filterMatches(searchTerm) {
+        const statusFilter = document.querySelector('input[name="status"]:checked')?.value || 'all';
+        const tournamentFilter = document.querySelector('input[name="tournament"]:checked')?.value || 'all';
+        
+        let filtered = this.matches;
+        
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+            filtered = filtered.filter(m => 
+                (m.home_team || '').toLowerCase().includes(term) ||
+                (m.away_team || '').toLowerCase().includes(term)
+            );
+        }
+        
+        if (tournamentFilter !== 'all') {
+            filtered = filtered.filter(m => m.tournament === tournamentFilter);
+        }
+        
+        if (statusFilter !== 'all') {
+            if (statusFilter === 'live') {
+                filtered = filtered.filter(m => [6, 7, 31, 32, 33].includes(m.status));
+            } else if (statusFilter === 'finished') {
+                filtered = filtered.filter(m => [100, 101, 102].includes(m.status));
+            } else if (statusFilter === 'scheduled') {
+                filtered = filtered.filter(m => ![6, 7, 31, 32, 33, 100, 101, 102].includes(m.status));
             }
-        });
+        }
+        
+        document.getElementById('matchCount').textContent = `${filtered.length} matches`;
+        this.renderMatches(filtered);
     }
 }
 
