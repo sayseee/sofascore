@@ -289,3 +289,42 @@
     z-index: 100;
     white-space: nowrap;
 }
+
+/* 🆕 Winning Odds Probability Cells */
+/* 🆕 Winning Odds Probability Cells */
+.prob-cell {
+    font-weight: 600;
+    font-size: 11px;
+    text-align: center;
+    padding: 2px 6px;
+    min-width: 45px;
+}
+
+/* Orange background for value bets */
+.probability-value {
+    color: #ff8c00;
+    background: rgba(255, 140, 0, 0.15);
+    border-radius: 4px;
+}
+
+/* Grey for neutral */
+.probability-neutral {
+    color: #999;
+}
+
+/* Edge indicators */
+.edge-positive {
+    color: #4caf50;
+    font-weight: 600;
+    font-size: 10px;
+}
+
+.edge-negative {
+    color: #f44336;
+    font-size: 10px;
+}
+
+.edge-neutral {
+    color: #999;
+    font-size: 10px;
+}

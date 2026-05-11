@@ -80,52 +80,57 @@ class MatchController {
     }
 
     async getMatchesWithOdds(req, res, next) {
-        try {
-            const { date } = req.query;
-            const matchDate = date || new Date().toISOString().split('T')[0];
-            
-            const matches = await db.query(`
-                SELECT 
-                    m.id,
-                    m.sofascore_match_id,
-                    m.match_datetime,
-                    m.status,
-                    m.status_description,
-                    m.home_score,
-                    m.away_score,
-                    ht.name AS home_team,
-                    at.name AS away_team,
-                    t.name AS tournament,
-                    m.round_info,
-                    MAX(CASE WHEN mo.selection_name = '1' THEN mo.decimal_odds END) AS odds_home,
-                    MAX(CASE WHEN mo.selection_name = 'X' THEN mo.decimal_odds END) AS odds_draw,
-                    MAX(CASE WHEN mo.selection_name = '2' THEN mo.decimal_odds END) AS odds_away,
-                    MAX(CASE WHEN mo.selection_name = '1' THEN mo.fractional_odds END) AS frac_home,
-                    MAX(CASE WHEN mo.selection_name = 'X' THEN mo.fractional_odds END) AS frac_draw,
-                    MAX(CASE WHEN mo.selection_name = '2' THEN mo.fractional_odds END) AS frac_away,
-                    wo.home_edge_percentage,
-                    wo.away_edge_percentage,
-                    wo.home_edge_type,
-                    wo.away_edge_type
-                FROM matches m
-                JOIN teams ht ON m.home_team_id = ht.id
-                JOIN teams at ON m.away_team_id = at.id
-                JOIN tournaments t ON m.tournament_id = t.id
-                LEFT JOIN match_odds mo ON m.id = mo.match_id 
-                    AND mo.market_group = '1X2' 
-                    AND mo.market_period = 'Full-time'
-                LEFT JOIN winning_odds wo ON m.id = wo.match_id
-                WHERE m.match_date = ?
-                GROUP BY m.id
-                ORDER BY m.match_datetime
-            `, [matchDate]);
-            
-            res.json({ success: true, data: matches || [] });
-        } catch (error) { 
-            console.error('getMatchesWithOdds error:', error.message);
-            next(error); 
-        }
+    try {
+        const { date } = req.query;
+        const matchDate = date || new Date().toISOString().split('T')[0];
+        
+        const matches = await db.query(`
+            SELECT 
+                m.id,
+                m.sofascore_match_id,
+                m.match_datetime,
+                m.status,
+                m.status_description,
+                m.home_score,
+                m.away_score,
+                ht.name AS home_team,
+                at.name AS away_team,
+                t.name AS tournament,
+                t.id AS tournament_id,
+                m.round_info,
+                MAX(CASE WHEN mo.selection_name = '1' THEN mo.decimal_odds END) AS odds_home,
+                MAX(CASE WHEN mo.selection_name = 'X' THEN mo.decimal_odds END) AS odds_draw,
+                MAX(CASE WHEN mo.selection_name = '2' THEN mo.decimal_odds END) AS odds_away,
+                MAX(CASE WHEN mo.selection_name = '1' THEN mo.fractional_odds END) AS frac_home,
+                MAX(CASE WHEN mo.selection_name = 'X' THEN mo.fractional_odds END) AS frac_draw,
+                MAX(CASE WHEN mo.selection_name = '2' THEN mo.fractional_odds END) AS frac_away,
+                wo.home_edge_percentage,
+                wo.away_edge_percentage,
+                wo.home_edge_type,
+                wo.away_edge_type,
+                wo.home_is_value,
+                wo.away_is_value,
+                wo.home_actual_probability,
+                wo.away_actual_probability
+            FROM matches m
+            JOIN teams ht ON m.home_team_id = ht.id
+            JOIN teams at ON m.away_team_id = at.id
+            JOIN tournaments t ON m.tournament_id = t.id
+            LEFT JOIN match_odds mo ON m.id = mo.match_id 
+                AND mo.market_group = '1X2' 
+                AND mo.market_period = 'Full-time'
+            LEFT JOIN winning_odds wo ON m.id = wo.match_id
+            WHERE m.match_date = ?
+            GROUP BY m.id
+            ORDER BY m.match_datetime
+        `, [matchDate]);
+        
+        res.json({ success: true, data: matches || [] });
+    } catch (error) { 
+        console.error('getMatchesWithOdds error:', error.message);
+        next(error); 
     }
+}
 
     async searchMatches(req, res, next) {
         try {

@@ -75,7 +75,7 @@ class App {
      */
     async loadMatches(date) {
     const tbody = document.getElementById('matchTableBody');
-    tbody.innerHTML = '<tr><td colspan="10" class="loading-text">Loading matches...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="loading-text">Loading matches...</td></tr>';
 
     try {
         const response = await this.apiClient.get('/matches/with-odds', { date });
@@ -88,7 +88,7 @@ class App {
         this.renderMatches(this.matches);
     } catch (error) {
         console.error('Failed to load matches:', error);
-        tbody.innerHTML = '<tr><td colspan="10" class="loading-text">Failed to load matches</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="loading-text">Failed to load matches</td></tr>';
     }
 }
 
@@ -181,7 +181,7 @@ async loadValueBets() {
         const tbody = document.getElementById('matchTableBody');
         
         if (matches.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" class="loading-text">No matches found for this date</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" class="loading-text">No matches found for this date</td></tr>';
             return;
         }
 
@@ -196,47 +196,67 @@ async loadValueBets() {
     }
 
     createMatchRow(match) {
-        const time = match.match_datetime 
-            ? new Date(match.match_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            : '--:--';
-        
-        const statusClass = [6, 7, 31, 32, 33].includes(match.status) ? 'live' : 
-                           [100, 101, 102].includes(match.status) ? 'finished' : 'scheduled';
-        
-        // ⚡ Odds with fallback
-        const oddsHome = match.odds_home ? Number(match.odds_home).toFixed(2) : '-';
-        const oddsDraw = match.odds_draw ? Number(match.odds_draw).toFixed(2) : '-';
-        const oddsAway = match.odds_away ? Number(match.odds_away).toFixed(2) : '-';
+    const time = match.match_datetime 
+        ? new Date(match.match_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '--:--';
+    
+    const statusClass = [6, 7, 31, 32, 33].includes(match.status) ? 'live' : 
+                       [100, 101, 102].includes(match.status) ? 'finished' : 'scheduled';
+    
+    // ⚡ Odds with fallback
+    const oddsHome = match.odds_home ? Number(match.odds_home).toFixed(2) : '-';
+    const oddsDraw = match.odds_draw ? Number(match.odds_draw).toFixed(2) : '-';
+    const oddsAway = match.odds_away ? Number(match.odds_away).toFixed(2) : '-';
 
-        // ⚡ Winning odds edge
-        let edgeHtml = '-';
-        if (match.home_edge_percentage !== null && match.home_edge_percentage !== undefined) {
-            const edge = parseFloat(match.home_edge_percentage);
-            if (edge > 2) {
-                edgeHtml = `<span class="edge-positive">H+${edge}%</span>`;
-            } else if (match.away_edge_percentage > 2) {
-                edgeHtml = `<span class="edge-positive">A+${match.away_edge_percentage}%</span>`;
-            } else if (edge < -5) {
-                edgeHtml = `<span class="edge-negative">${edge}%</span>`;
-            }
+    // ⚡ Winning odds edge
+    let edgeHtml = '-';
+    if (match.home_edge_percentage !== null && match.home_edge_percentage !== undefined) {
+        const homeEdge = parseFloat(match.home_edge_percentage);
+        const awayEdge = parseFloat(match.away_edge_percentage || 0);
+        
+        if (homeEdge > 2) {
+            edgeHtml = `<span class="edge-positive">H+${homeEdge}%</span>`;
+        } else if (awayEdge > 2) {
+            edgeHtml = `<span class="edge-positive">A+${awayEdge}%</span>`;
+        } else if (homeEdge < -5 || awayEdge < -5) {
+            edgeHtml = `<span class="edge-negative">${homeEdge}% / ${awayEdge}%</span>`;
+        } else {
+            edgeHtml = `<span class="edge-neutral">${homeEdge}% / ${awayEdge}%</span>`;
         }
-
-        return `
-            <tr data-match-id="${match.id}" class="${match.id === this.selectedMatchId ? 'selected' : ''}">
-                <td><span class="tag ${statusClass}">${time}</span></td>
-                <td class="team-cell">${match.home_team || 'Home'}</td>
-                <td class="score-cell">
-                    ${match.home_score !== null ? `${match.home_score} - ${match.away_score}` : 'vs'}
-                </td>
-                <td class="team-cell">${match.away_team || 'Away'}</td>
-                <td style="font-size:10px;color:var(--text-tertiary);">${match.tournament || '-'}</td>
-                <td class="odds-cell">${oddsHome}</td>
-                <td class="odds-cell">${oddsDraw}</td>
-                <td class="odds-cell">${oddsAway}</td>
-                <td>${edgeHtml}</td>
-            </tr>
-        `;
     }
+
+    // 🆕 Actual winning probabilities (stored as decimal 0-1, convert to percentage)
+    const homeActualProb = match.home_actual_probability !== null && match.home_actual_probability !== undefined
+        ? `${(match.home_actual_probability * 100).toFixed(0)}%` 
+        : '-';
+    const awayActualProb = match.away_actual_probability !== null && match.away_actual_probability !== undefined
+        ? `${(match.away_actual_probability * 100).toFixed(0)}%` 
+        : '-';
+
+    // 🆕 Color coding: orange for value bets, grey for neutral
+    const homeProbClass = match.home_is_value == 1 ? 'probability-value' : 
+                         (match.home_actual_probability ? 'probability-neutral' : '');
+    const awayProbClass = match.away_is_value == 1 ? 'probability-value' : 
+                         (match.away_actual_probability ? 'probability-neutral' : '');
+
+    return `
+        <tr data-match-id="${match.id}" class="${match.id === this.selectedMatchId ? 'selected' : ''}">
+            <td><span class="tag ${statusClass}">${time}</span></td>
+            <td class="team-cell">${match.home_team || 'Home'}</td>
+            <td class="score-cell">
+                ${match.home_score !== null ? `${match.home_score} - ${match.away_score}` : 'vs'}
+            </td>
+            <td class="team-cell">${match.away_team || 'Away'}</td>
+            <td style="font-size:10px;color:var(--text-tertiary);">${match.tournament || '-'}</td>
+            <td class="odds-cell">${oddsHome}</td>
+            <td class="odds-cell">${oddsDraw}</td>
+            <td class="odds-cell">${oddsAway}</td>
+            <td>${edgeHtml}</td>
+            <td class="prob-cell ${homeProbClass}">${homeActualProb}</td>
+            <td class="prob-cell ${awayProbClass}">${awayActualProb}</td>
+        </tr>
+    `;
+}
 
     // Select match - load standings + detail
 async selectMatch(matchId) {
