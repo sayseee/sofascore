@@ -1,8 +1,8 @@
 /**
  * Winning Odds Collector - Expected vs Actual Win Probabilities
- * 
+ *
  * Endpoint: GET /api/v1/event/{eventId}/provider/1/winning-odds
- * 
+ *
  * API Response:
  * {
  *   "home": {
@@ -27,21 +27,24 @@ const db = require('../config/database');
 class WinningOddsCollector {
     constructor() {
         this.collectorName = 'winning_odds_collector';
-        this.debug = false;
     }
 
     async initialize() {
-        if (!db.isConnected) await db.initialize();
+        if (!db.isConnected) {
+            await db.initialize();
+        }
     }
 
-    delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
+    /**
+     * Convert fractional odds to decimal
+     * "2/1"   → 3.000
+     * "27/20" → 2.350
+     */
     fractionalToDecimal(fractional) {
         if (!fractional) return null;
         const clean = fractional.trim().toLowerCase();
         if (clean === 'evs' || clean === 'evens') return 2.000;
+
         const parts = clean.split('/');
         if (parts.length === 2) {
             const num = parseFloat(parts[0]);
@@ -53,342 +56,415 @@ class WinningOddsCollector {
         return null;
     }
 
+    /**
+     * Collect winning odds for a single match (by DB match ID)
+     */
     async collectForMatch(matchId) {
         try {
             await this.initialize();
+
+            // Get the Sofascore event ID
             const matches = await db.query(
-                'SELECT id, sofascore_match_id FROM matches WHERE id = ?',
+                'SELECT id, sofascore_match_id, home_team_id, away_team_id FROM matches WHERE id = ?',
                 [matchId]
             );
+
             if (matches.length === 0) {
+                console.log(`❌ Match ID ${matchId} not found in database`);
+                console.log('   Run scheduledEventsCollector first to populate matches');
                 return { success: false, error: 'Match not found' };
             }
 
             const match = matches[0];
             const endpoint = `/event/${match.sofascore_match_id}/provider/1/winning-odds`;
             
-            console.log(`   API: https://api.sofascore.com/api/v1${endpoint}`);
-            
             let response;
             try {
                 response = await httpClient.get(endpoint);
             } catch (httpError) {
-                console.log(`   HTTP Error: ${httpError.message}`);
+                // ⚡ Skip 404/403 silently
                 if (httpError.message.includes('404') || httpError.message.includes('403')) {
                     return { success: false, error: 'Not available', skipped: true };
                 }
                 throw httpError;
             }
 
-            // Debug raw response
-            console.log(`   Response keys: ${response ? Object.keys(response).join(', ') : 'null'}`);
-            
             if (!response || (!response.home && !response.away)) {
-                console.log(`   No home/away data in response`);
                 return { success: false, error: 'No data', skipped: true };
             }
 
-        const home = response.home || {};
-        const away = response.away || {};
-        const homeDecimal = this.fractionalToDecimal(home.fractionalValue);
-        const awayDecimal = this.fractionalToDecimal(away.fractionalValue);
-        const homeExpected = home.expected || 0;
-        const homeActual = home.actual || 0;
-        const awayExpected = away.expected || 0;
-        const awayActual = away.actual || 0;
-        const homeEdge = homeActual - homeExpected;
-        const awayEdge = awayActual - awayExpected;
+            // Extract data
+            const home = response.home || {};
+            const away = response.away || {};
 
-        const getEdgeType = (edge) => {
-            if (edge > 2) return 'positive';
-            if (edge < -2) return 'negative';
-            return 'neutral';
-        };
+            // Convert fractional to decimal
+            const homeDecimal = this.fractionalToDecimal(home.fractionalValue);
+            const awayDecimal = this.fractionalToDecimal(away.fractionalValue);
 
-        const totalExpected = homeExpected + awayExpected;
-        const marketGap = Math.max(0, 100 - totalExpected);
+            // Values are percentages (33 = 33%)
+            const homeExpected = home.expected || 0;
+            const homeActual   = home.actual   || 0;
+            const awayExpected = away.expected || 0;
+            const awayActual   = away.actual   || 0;
 
-        await db.query(
-            `INSERT INTO winning_odds (
-                match_id, provider_id,
-                home_expected_probability, home_actual_probability,
-                home_expected_decimal, home_actual_decimal,
-                home_expected_fractional,
-                home_edge_percentage, home_edge_type, home_is_value,
-                away_expected_probability, away_actual_probability,
-                away_expected_decimal, away_actual_decimal,
-                away_expected_fractional,
-                away_edge_percentage, away_edge_type, away_is_value,
-                total_expected_probability, market_efficiency_gap,
-                timestamp_recorded
-            ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-            ON DUPLICATE KEY UPDATE
-                home_edge_percentage = VALUES(home_edge_percentage),
-                home_edge_type = VALUES(home_edge_type),
-                home_is_value = VALUES(home_is_value),
-                away_edge_percentage = VALUES(away_edge_percentage),
-                away_edge_type = VALUES(away_edge_type),
-                away_is_value = VALUES(away_is_value),
-                updated_at = NOW()`,
-            [
+            // Edge = actual - expected (percentage points)
+            const homeEdge = homeActual - homeExpected;
+            const awayEdge = awayActual - awayExpected;
+
+            // Edge type
+            const getEdgeType = (edge) => {
+                if (edge > 2)  return 'positive';  // team outperforms
+                if (edge < -2) return 'negative';  // team underperforms
+                return 'neutral';
+            };
+
+            // Display
+            console.log(`\n   🏠 HOME:`);
+            console.log(`      Fractional: ${home.fractionalValue}`);
+            console.log(`      Decimal:    ${homeDecimal}`);
+            console.log(`      Expected:   ${homeExpected}%`);
+            console.log(`      Actual:     ${homeActual}%`);
+            console.log(`      Edge:       ${homeEdge > 0 ? '+' : ''}${homeEdge}% (${getEdgeType(homeEdge)})`);
+            console.log(`      Value Bet:  ${homeEdge > 2 ? 'YES ✅' : 'No'}`);
+
+            console.log(`\n   🛫 AWAY:`);
+            console.log(`      Fractional: ${away.fractionalValue}`);
+            console.log(`      Decimal:    ${awayDecimal}`);
+            console.log(`      Expected:   ${awayExpected}%`);
+            console.log(`      Actual:     ${awayActual}%`);
+            console.log(`      Edge:       ${awayEdge > 0 ? '+' : ''}${awayEdge}% (${getEdgeType(awayEdge)})`);
+            console.log(`      Value Bet:  ${awayEdge > 2 ? 'YES ✅' : 'No'}`);
+
+            // Total expected and market efficiency gap
+            const totalExpected = homeExpected + awayExpected;
+            const marketGap     = Math.max(0, 100 - totalExpected);
+            console.log(`\n   📈 Market: Total Expected ${totalExpected}% | Draw Implied ${marketGap}%`);
+
+            // Insert into database 
+            const sql = `
+                INSERT INTO winning_odds (
+                    match_id, provider_id,
+                    home_expected_probability, home_actual_probability,
+                    home_expected_decimal, home_actual_decimal,
+                    home_expected_fractional,
+                    home_edge_percentage, home_edge_type, home_is_value,
+                    away_expected_probability, away_actual_probability,
+                    away_expected_decimal, away_actual_decimal,
+                    away_expected_fractional,
+                    away_edge_percentage, away_edge_type, away_is_value,
+                    total_expected_probability, market_efficiency_gap,
+                    timestamp_recorded
+                ) VALUES (
+                    ?, 1,
+                    ?, ?,
+                    ?, ?,
+                    ?,
+                    ?, ?, ?,
+                    ?, ?,
+                    ?, ?,
+                    ?,
+                    ?, ?, ?,
+                    ?, ?,
+                    NOW()
+                )
+                ON DUPLICATE KEY UPDATE
+                    home_expected_probability = VALUES(home_expected_probability),
+                    home_actual_probability   = VALUES(home_actual_probability),
+                    home_expected_decimal     = VALUES(home_expected_decimal),
+                    home_actual_decimal       = VALUES(home_actual_decimal),
+                    home_expected_fractional  = VALUES(home_expected_fractional),
+                    home_edge_percentage      = VALUES(home_edge_percentage),
+                    home_edge_type            = VALUES(home_edge_type),
+                    home_is_value             = VALUES(home_is_value),
+                    away_expected_probability = VALUES(away_expected_probability),
+                    away_actual_probability   = VALUES(away_actual_probability),
+                    away_expected_decimal     = VALUES(away_expected_decimal),
+                    away_actual_decimal       = VALUES(away_actual_decimal),
+                    away_expected_fractional  = VALUES(away_expected_fractional),
+                    away_edge_percentage      = VALUES(away_edge_percentage),
+                    away_edge_type            = VALUES(away_edge_type),
+                    away_is_value             = VALUES(away_is_value),
+                    total_expected_probability = VALUES(total_expected_probability),
+                    market_efficiency_gap     = VALUES(market_efficiency_gap),
+                    timestamp_recorded        = NOW()
+            `;
+
+            // Count the ? placeholders: Let me count them...
+            // VALUES clause has: ?(matchId), ?(homeExpected), ?(homeActual), ?(homeDecimal), ?(homeActualDecimal),
+            //                    ?(homeFractional), ?(homeEdge), ?(homeEdgeType), ?(homeIsValue),
+            //                    ?(awayExpected), ?(awayActual), ?(awayDecimal), ?(awayActualDecimal),
+            //                    ?(awayFractional), ?(awayEdge), ?(awayEdgeType), ?(awayIsValue),
+            //                    ?(totalExpected), ?(marketGap)
+            // That's 18 parameters
+
+            const params = [
+                matchId,                                           // 1
+
+                // HOME
+                parseFloat((homeExpected / 100).toFixed(4)),       // 2
+                parseFloat((homeActual   / 100).toFixed(4)),       // 3
+                homeDecimal || null,                               // 4
+                null,                                              // 5 (home_actual_decimal)
+                home.fractionalValue || null,                      // 6
+                parseFloat(homeEdge.toFixed(2)),                   // 7
+                getEdgeType(homeEdge),                             // 8
+                homeEdge > 2 ? 1 : 0,                             // 9
+
+                // AWAY
+                parseFloat((awayExpected / 100).toFixed(4)),       // 10
+                parseFloat((awayActual   / 100).toFixed(4)),       // 11
+                awayDecimal || null,                               // 12
+                null,                                              // 13 (away_actual_decimal)
+                away.fractionalValue || null,                      // 14
+                parseFloat(awayEdge.toFixed(2)),                   // 15
+                getEdgeType(awayEdge),                             // 16
+                awayEdge > 2 ? 1 : 0,                             // 17
+
+                // MARKET
+                parseFloat((totalExpected / 100).toFixed(4)),      // 18
+                parseFloat((marketGap     / 100).toFixed(4))       // 19
+            ];
+
+            console.log(`   SQL params count: ${params.length}`); // Debug line - should be 19
+
+console.log('Parameter count:', params.length);
+console.log('Parameters:', params);
+            await db.query(sql, params);
+
+            console.log(`   ✅ Saved to database`);
+            return {
+                success: true,
                 matchId,
-                (homeExpected / 100).toFixed(4),
-                (homeActual / 100).toFixed(4),
-                homeDecimal, null,
-                home.fractionalValue || null,
-                homeEdge, getEdgeType(homeEdge), homeEdge > 2 ? 1 : 0,
-                (awayExpected / 100).toFixed(4),
-                (awayActual / 100).toFixed(4),
-                awayDecimal, null,
-                away.fractionalValue || null,
-                awayEdge, getEdgeType(awayEdge), awayEdge > 2 ? 1 : 0,
-                (totalExpected / 100).toFixed(4),
-                (marketGap / 100).toFixed(4)
-            ]
-        );
+                homeEdge,
+                awayEdge,
+                homeValue: homeEdge > 2,
+                awayValue: awayEdge > 2
+            };
 
-        return { 
-            success: true, matchId,
-            homeEdge, awayEdge,
-            homeValue: homeEdge > 2,
-            awayValue: awayEdge > 2
-        };
-
-    } catch (error) {
-        if (error.code === 'ER_DUP_ENTRY') {
-            return { success: true, matchId, note: 'Already exists' };
-        }
-        // ⚡ Skip 404/403 at any level
-        if (error.message.includes('404') || error.message.includes('403')) {
-            return { success: false, error: 'Not available', skipped: true };
-        }
-        return { success: false, matchId, error: error.message };
-    }
-}
-
-    // ⚡ NEW: Batch for date range
-    async collectDateRange(startDate, endDate, limit) {
-    await this.initialize();
-    const max = (limit === 'all' || limit === '0' || !limit) ? 999999 : parseInt(limit);
-    
-    const matches = await db.query(
-        `SELECT m.id, m.sofascore_match_id, ht.name AS home_name, at.name AS away_name, m.match_date
-        FROM matches m
-        JOIN teams ht ON m.home_team_id = ht.id
-        JOIN teams at ON m.away_team_id = at.id
-        WHERE m.match_date BETWEEN ? AND ?
-        AND m.id NOT IN (SELECT match_id FROM winning_odds)
-        ORDER BY m.match_date, m.match_datetime ASC
-        LIMIT ${max}`,
-        [startDate, endDate]
-    );
-
-    console.log(`\n${'═'.repeat(60)}`);
-    console.log(`📊 WINNING ODDS: ${startDate} → ${endDate}`);
-    console.log(`   Matches: ${matches.length}`);
-    console.log(`${'═'.repeat(60)}\n`);
-
-    let success = 0, failed = 0, skipped = 0, valueBets = 0;
-    
-    // ⚡ BATCH PROCESSING: 10 matches per batch, 5 second pause between batches
-    const BATCH_SIZE = 10;
-    const BATCH_DELAY = 5000; // 5 seconds between batches
-    const MATCH_DELAY = 1500;  // 1.5 seconds between individual matches
-
-    for (let batchStart = 0; batchStart < matches.length; batchStart += BATCH_SIZE) {
-        const batchEnd = Math.min(batchStart + BATCH_SIZE, matches.length);
-        const batch = matches.slice(batchStart, batchEnd);
-        
-        console.log(`\n   ── Batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(matches.length / BATCH_SIZE)} (${batch.length} matches) ──\n`);
-        
-        for (let i = 0; i < batch.length; i++) {
-            const m = batch[i];
-            const globalIndex = batchStart + i + 1;
-            
-            console.log(`   [${globalIndex}/${matches.length}] ${m.match_date} | ${m.home_name} vs ${m.away_name}`);
-            
-            const result = await this.collectForMatch(m.id);
-            
-            if (result.success) {
-                success++;
-                if (result.homeValue || result.awayValue) {
-                    valueBets++;
-                    console.log(`      💎 VALUE BET | H:${result.homeEdge > 0 ? '+' : ''}${result.homeEdge}% | A:${result.awayEdge > 0 ? '+' : ''}${result.awayEdge}%`);
-                } else if (result.homeEdge !== undefined) {
-                    console.log(`      H:${result.homeEdge > 0 ? '+' : ''}${result.homeEdge}% | A:${result.awayEdge > 0 ? '+' : ''}${result.awayEdge}%`);
-                }
-            } else if (result.skipped) {
-                skipped++;
-                console.log(`      ⏭️ Not available`);
-            } else {
-                failed++;
-                console.log(`      ⚠️ ${result.error}`);
+        } catch (error) {
+            console.error(`   ❌ Error: ${error.message}`);
+            if (error.code === 'ER_DUP_ENTRY') {
+                console.log('   (Duplicate entry - already exists)');
+                return { success: true, matchId, note: 'Already exists' };
             }
-            
-            // ⚡ Delay between individual matches
-            await this.delay(MATCH_DELAY);
-        }
-        
-        // ⚡ Pause between batches (except after the last batch)
-        if (batchEnd < matches.length) {
-            console.log(`\n   ⏸️  Batch complete. Pausing ${BATCH_DELAY / 1000}s to avoid rate limiting...`);
-            await this.delay(BATCH_DELAY);
+            return { success: false, matchId, error: error.message };
         }
     }
 
-    console.log(`\n${'═'.repeat(60)}`);
-    console.log(`📊 WINNING ODDS SUMMARY`);
-    console.log(`   Total:    ${matches.length}`);
-    console.log(`   Success:  ${success}`);
-    console.log(`   Skipped:  ${skipped} (not available)`);
-    console.log(`   Failed:   ${failed}`);
-    console.log(`   💎 Value: ${valueBets}`);
-    console.log(`${'═'.repeat(60)}\n`);
-
-    await db.close();
-    return { startDate, endDate, total: matches.length, success, failed, skipped, valueBets };
-}
-
-    // ⚡ NEW: Today only
-    async collectToday(limit) {
-        const today = new Date().toISOString().split('T')[0];
-        return this.collectDateRange(today, today, limit || 30);
-    }
-
-    // ⚡ NEW: Upcoming matches
-    async collectUpcoming(days, limit) {
+    /**
+     * Collect for multiple upcoming matches
+     */
+    async collectForUpcoming(limit = 10) {
         await this.initialize();
-        const d = parseInt(days) || 7;
-        const max = parseInt(limit) || 30;
+
+        const safeLimit = parseInt(limit, 10) || 10;
 
         const matches = await db.query(
-            `SELECT m.id, m.sofascore_match_id, ht.name AS home_name, at.name AS away_name, m.match_date
+            `SELECT m.id, m.sofascore_match_id,
+                    ht.name as home_team, at.name as away_team,
+                    m.match_datetime
             FROM matches m
             JOIN teams ht ON m.home_team_id = ht.id
             JOIN teams at ON m.away_team_id = at.id
             WHERE m.match_datetime > NOW()
-            AND m.match_datetime < DATE_ADD(NOW(), INTERVAL ${d} DAY)
-            AND m.id NOT IN (SELECT match_id FROM winning_odds WHERE timestamp_recorded > DATE_SUB(NOW(), INTERVAL 6 HOUR))
+            AND m.match_datetime < DATE_ADD(NOW(), INTERVAL 7 DAY)
+            AND m.id NOT IN (
+                SELECT match_id FROM winning_odds
+                WHERE timestamp_recorded > DATE_SUB(NOW(), INTERVAL 6 HOUR)
+            )
             ORDER BY m.match_datetime ASC
-            LIMIT ${max}`
+            LIMIT ?`,
+            [safeLimit]
         );
 
-        console.log(`\n📊 WINNING ODDS: Next ${d} days - ${matches.length} matches\n`);
-
-        let success = 0, failed = 0, valueBets = 0;
-
-        for (let i = 0; i < matches.length; i++) {
-            const m = matches[i];
-            console.log(`   [${i+1}/${matches.length}] ${m.match_date} | ${m.home_name} vs ${m.away_name}`);
-            
-            // In collectDateRange, collectToday, collectUpcoming - update the logging:
-            const result = await this.collectForMatch(m.id);
-            if (result.success) {
-                success++;
-                if (result.homeValue || result.awayValue) valueBets++;
-                if (result.homeEdge !== undefined) {
-                    console.log(`      H:${result.homeEdge > 0 ? '+' : ''}${result.homeEdge}% | A:${result.awayEdge > 0 ? '+' : ''}${result.awayEdge}%`);
-                }
-            } else if (result.skipped) {
-                // ⚡ Silently skip unavailable matches
-                console.log(`      ⏭️ Skipped (not available)`);
-            } else {
-                failed++;
-                console.log(`      ⚠️ ${result.error}`);
-            }
-            await this.delay(1500);
+        if (matches.length === 0) {
+            console.log('✅ All upcoming matches already have recent winning odds');
+            await db.close();
+            return [];
         }
 
-        console.log(`\n✅ ${success} ok, ${failed} failed, ${valueBets} value bets`);
+        console.log(`\n📊 Collecting winning odds for ${matches.length} matches:\n`);
+
+        const results = [];
+        for (const match of matches) {
+            console.log(`${'─'.repeat(60)}`);
+            console.log(`⚽ ${match.home_team} vs ${match.away_team} (${new Date(match.match_datetime).toLocaleDateString()})`);
+
+            const result = await this.collectForMatch(match.id);
+            results.push({
+                matchId: match.id,
+                teams: `${match.home_team} vs ${match.away_team}`,
+                ...result
+            });
+
+            await new Promise(r => setTimeout(r, 1500));
+        }
+
+        const successful  = results.filter(r => r.success);
+        const valueBets   = successful.filter(r => r.homeValue || r.awayValue);
+
+        console.log(`\n${'═'.repeat(60)}`);
+        console.log(`📊 WINNING ODDS SUMMARY`);
+        console.log(`   Total:        ${results.length}`);
+        console.log(`   Successful:   ${successful.length}`);
+        console.log(`   Failed:       ${results.length - successful.length}`);
+        console.log(`   Value Bets:   ${valueBets.length}`);
+        console.log(`${'═'.repeat(60)}\n`);
+
         await db.close();
-        return { success, failed, valueBets };
+        return results;
+    }
+
+    /**
+     * Collect winning odds for matches in a date range
+     */
+    async collectDateRange(startDate, endDate, limit = 50) {
+    await this.initialize();
+
+    // Force limit to be a proper integer
+    
+    const safeLimit = Math.floor(Number(limit)) || 50;
+
+    // Add check for existing recent data (like collectForUpcoming does)
+    const matches = await db.query(
+        `SELECT m.id, m.sofascore_match_id,
+                ht.name as home_team,
+                at.name as away_team,
+                m.match_datetime
+         FROM matches m
+         JOIN teams ht ON m.home_team_id = ht.id
+         JOIN teams at ON m.away_team_id = at.id
+         WHERE m.match_datetime >= ?
+           AND m.match_datetime < DATE_ADD(?, INTERVAL 1 DAY)
+           AND m.id NOT IN (
+               SELECT match_id FROM winning_odds
+               WHERE timestamp_recorded > DATE_SUB(NOW(), INTERVAL 6 HOUR)
+           )
+         ORDER BY m.match_datetime ASC
+         LIMIT ${safeLimit}`,
+        [startDate, endDate]
+    );
+
+    if (matches.length === 0) {
+        console.log(`❌ No matches found between ${startDate} and ${endDate}`);
+        await db.close();
+        return [];
+    }
+
+    console.log(`📊 Found ${matches.length} matches\n`);
+
+    const results = [];
+
+    for (const match of matches) {
+        console.log(`${'─'.repeat(60)}`);
+        console.log(`⚽ ${match.home_team} vs ${match.away_team}`);
+
+        const result = await this.collectForMatch(match.id);
+
+        results.push({
+            matchId: match.id,
+            teams: `${match.home_team} vs ${match.away_team}`,
+            ...result
+        });
+
+        await new Promise(r => setTimeout(r, 1200));
+    }
+
+    await db.close();
+    return results;
+}
+
+    /**
+     * Collect today's matches
+     */
+    async collectToday(limit = 50) {
+        const today = new Date().toISOString().split('T')[0];
+        return await this.collectDateRange(today, today, limit);
     }
 }
 
-// CLI
-// CLI Entry Point
+// ─── CLI Entry Point ──────────────────────────────────────────────────────────
 if (require.main === module) {
     const collector = new WinningOddsCollector();
     const args = process.argv.slice(2);
 
     (async () => {
         try {
-            // ⚡ Check --range first (both with and without limit)
             if (args.includes('--range')) {
-                const rangeIndex = args.indexOf('--range');
-                const startDate = args[rangeIndex + 1];
-                const endDate = args[rangeIndex + 2];
-                const limit = args[rangeIndex + 3] || 50;
-                
+                const idx       = args.indexOf('--range');
+                const startDate = args[idx + 1];
+                const endDate   = args[idx + 2];
+                const limit     = parseInt(args[idx + 3], 10) || 50;
+
                 if (!startDate || !endDate) {
                     console.log('Usage: --range YYYY-MM-DD YYYY-MM-DD [limit]');
                     process.exit(1);
                 }
-                
+
                 console.log(`\n📅 Date range: ${startDate} → ${endDate} (limit: ${limit})\n`);
                 await collector.collectDateRange(startDate, endDate, limit);
-                
+
             } else if (args.includes('--window')) {
-                const windowIndex = args.indexOf('--window');
-                const forwardDays = parseInt(args[windowIndex + 1]) || 2;
-                const backwardDays = parseInt(args[windowIndex + 2]) || 5;
-                const limit = args[windowIndex + 3] || 50;
-                
-                const today = new Date();
+                const idx          = args.indexOf('--window');
+                const forwardDays  = parseInt(args[idx + 1], 10) || 2;
+                const backwardDays = parseInt(args[idx + 2], 10) || 5;
+                const limit        = parseInt(args[idx + 3], 10) || 50;
+
+                const today     = new Date();
                 const startDate = new Date(today);
                 startDate.setDate(today.getDate() - backwardDays);
-                const endDate = new Date(today);
+                const endDate   = new Date(today);
                 endDate.setDate(today.getDate() + forwardDays);
-                
+
                 console.log(`\n🪟 Window: ${backwardDays}d back + ${forwardDays}d forward (limit: ${limit})`);
                 console.log(`   ${startDate.toISOString().split('T')[0]} → ${endDate.toISOString().split('T')[0]}\n`);
-                
+
                 await collector.collectDateRange(
                     startDate.toISOString().split('T')[0],
                     endDate.toISOString().split('T')[0],
                     limit
                 );
-                
+
             } else if (args.includes('--days')) {
-                const daysIndex = args.indexOf('--days');
-                const days = parseInt(args[daysIndex + 1]) || 7;
-                const limit = args[daysIndex + 2] || 50;
-                
-                const today = new Date();
+                const idx   = args.indexOf('--days');
+                const days  = parseInt(args[idx + 1], 10) || 7;
+                const limit = parseInt(args[idx + 2], 10) || 50;
+
+                const today   = new Date();
                 const endDate = new Date();
                 endDate.setDate(today.getDate() + days);
-                
+
                 console.log(`\n📅 Next ${days} days (limit: ${limit})\n`);
                 await collector.collectDateRange(
                     today.toISOString().split('T')[0],
                     endDate.toISOString().split('T')[0],
                     limit
                 );
-                
+
             } else if (args.includes('--today')) {
-                const todayIndex = args.indexOf('--today');
-                const limit = args[todayIndex + 1] || 50;
+                const idx   = args.indexOf('--today');
+                const limit = parseInt(args[idx + 1], 10) || 50;
                 await collector.collectToday(limit);
-                
+
             } else if (args[0] && args[0].match(/^\d{4}-\d{2}-\d{2}$/)) {
-                const date = args[0];
-                const limit = args[1] || 50;
+                const date  = args[0];
+                const limit = parseInt(args[1], 10) || 50;
                 await collector.collectDateRange(date, date, limit);
-                
+
             } else if (args[0] && !isNaN(args[0])) {
                 await collector.initialize();
-                const result = await collector.collectForMatch(parseInt(args[0]));
+                const result = await collector.collectForMatch(parseInt(args[0], 10));
                 console.log('Result:', JSON.stringify(result, null, 2));
                 await db.close();
-                
+
             } else {
-                // Default: 5 days back + 2 days forward, 30 limit
-                const today = new Date();
+                // Default: 5 days back + 2 days forward, limit 30
+                const today     = new Date();
                 const startDate = new Date(today);
                 startDate.setDate(today.getDate() - 5);
-                const endDate = new Date(today);
+                const endDate   = new Date(today);
                 endDate.setDate(today.getDate() + 2);
-                
+
                 console.log(`\n📅 Default: 5d back + 2d forward (limit: 30)\n`);
                 await collector.collectDateRange(
                     startDate.toISOString().split('T')[0],
@@ -396,7 +472,7 @@ if (require.main === module) {
                     30
                 );
             }
-            
+
             process.exit(0);
         } catch (error) {
             console.error('\n❌ Fatal error:', error.message);
