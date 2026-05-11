@@ -118,23 +118,7 @@ class WinningOddsCollector {
                 return 'neutral';
             };
 
-            // Display
-            console.log(`\n   🏠 HOME:`);
-            console.log(`      Fractional: ${home.fractionalValue}`);
-            console.log(`      Decimal:    ${homeDecimal}`);
-            console.log(`      Expected:   ${homeExpected}%`);
-            console.log(`      Actual:     ${homeActual}%`);
-            console.log(`      Edge:       ${homeEdge > 0 ? '+' : ''}${homeEdge}% (${getEdgeType(homeEdge)})`);
-            console.log(`      Value Bet:  ${homeEdge > 2 ? 'YES ✅' : 'No'}`);
-
-            console.log(`\n   🛫 AWAY:`);
-            console.log(`      Fractional: ${away.fractionalValue}`);
-            console.log(`      Decimal:    ${awayDecimal}`);
-            console.log(`      Expected:   ${awayExpected}%`);
-            console.log(`      Actual:     ${awayActual}%`);
-            console.log(`      Edge:       ${awayEdge > 0 ? '+' : ''}${awayEdge}% (${getEdgeType(awayEdge)})`);
-            console.log(`      Value Bet:  ${awayEdge > 2 ? 'YES ✅' : 'No'}`);
-
+             
             // Total expected and market efficiency gap
             const totalExpected = homeExpected + awayExpected;
             const marketGap     = Math.max(0, 100 - totalExpected);
@@ -224,11 +208,7 @@ class WinningOddsCollector {
                 parseFloat((totalExpected / 100).toFixed(4)),      // 18
                 parseFloat((marketGap     / 100).toFixed(4))       // 19
             ];
-
-            console.log(`   SQL params count: ${params.length}`); // Debug line - should be 19
-
-console.log('Parameter count:', params.length);
-console.log('Parameters:', params);
+ 
             await db.query(sql, params);
 
             console.log(`   ✅ Saved to database`);
