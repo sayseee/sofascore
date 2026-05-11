@@ -110,58 +110,63 @@ class ScheduledEventsCollector {
             await this.upsertMatch(event, tournamentId, seasonId, homeTeamId, awayTeamId);
         }
     }
-
-    /**
-     * Upsert Tournament
+ 
+     /**
+     * Upsert Tournament - Fixed country/alpha extraction
      */
     async upsertTournament(tournamentData) {
-    if (!tournamentData?.uniqueTournament?.id) return null;
+        if (!tournamentData?.uniqueTournament?.id) return null;
 
-    const t = tournamentData.uniqueTournament;
-    const uniqueId = t.id;
-    const categoryId = tournamentData.id || null;
-    
-    const existing = await db.query(
-        'SELECT id FROM tournaments WHERE sofascore_tournament_id = ?',
-        [uniqueId]
-    );
+        const t = tournamentData.uniqueTournament;
+        const uniqueId = t.id;
+        const categoryId = tournamentData.id || null;
+        
+        // ⚡ FIX: Country comes from category.country, not t.country
+        const countryName = tournamentData.category?.country?.name || t.country?.name || null;
+        const countryAlpha2 = tournamentData.category?.country?.alpha2 || t.country?.alpha2 || null;
+        const countryAlpha3 = tournamentData.category?.country?.alpha3 || null;
+        
+        const existing = await db.query(
+            'SELECT id FROM tournaments WHERE sofascore_tournament_id = ?',
+            [uniqueId]
+        );
 
-    if (existing.length > 0) {
-        await db.query(
-            `UPDATE tournaments SET 
-            name = ?, slug = ?, country = ?, country_code = ?, 
-            category = ?, unique_tournament_id = ?, category_tournament_id = ?,
-            updated_at = NOW()
-            WHERE id = ?`,
-            [
-                t.name || 'Unknown',
-                t.slug || '',
-                t.country?.name || null,
-                t.country?.alpha2 || null,
-                tournamentData.category?.name || null,
-                uniqueId,
-                categoryId,
-                existing[0].id
-            ]
-        );
-        this.stats.tournaments.updated++;
-        return existing[0].id;
-    } else {
-        const result = await db.query(
-            `INSERT INTO tournaments 
-            (sofascore_tournament_id, unique_tournament_id, category_tournament_id, 
-             name, slug, country, country_code, category)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [uniqueId, uniqueId, categoryId, t.name || 'Unknown', t.slug || '',
-             t.country?.name || null, t.country?.alpha2 || null, tournamentData.category?.name || null]
-        );
-        this.stats.tournaments.inserted++;
-        return result.insertId;
+        if (existing.length > 0) {
+            await db.query(
+                `UPDATE tournaments SET 
+                name = ?, slug = ?, country = ?, country_code = ?, 
+                category = ?, unique_tournament_id = ?, category_tournament_id = ?,
+                updated_at = NOW()
+                WHERE id = ?`,
+                [
+                    t.name || 'Unknown',
+                    t.slug || '',
+                    countryName,
+                    countryAlpha2,        // alpha2 e.g., "EN"
+                    tournamentData.category?.name || null,
+                    uniqueId,
+                    categoryId,
+                    existing[0].id
+                ]
+            );
+            this.stats.tournaments.updated++;
+            return existing[0].id;
+        } else {
+            const result = await db.query(
+                `INSERT INTO tournaments 
+                (sofascore_tournament_id, unique_tournament_id, category_tournament_id, 
+                name, slug, country, country_code, category)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [uniqueId, uniqueId, categoryId, t.name || 'Unknown', t.slug || '',
+                countryName, countryAlpha2, tournamentData.category?.name || null]
+            );
+            this.stats.tournaments.inserted++;
+            return result.insertId;
+        }
     }
-}
 
     /**
-     * Upsert Team
+     * Upsert Team - Fixed country/alpha extraction
      */
     async upsertTeam(teamData) {
         if (!teamData?.id) return null;
@@ -173,33 +178,34 @@ class ScheduledEventsCollector {
 
         const name = teamData.name || 'Unknown Team';
         const shortName = teamData.shortName || name.substring(0, 3).toUpperCase();
-        const country = teamData.country?.name || null;
-        const countryCode = teamData.country?.alpha2 || null;
+        
+        // ⚡ FIX: country.alpha2, not just country.name
+        const countryName = teamData.country?.name || null;
+        const countryCode = teamData.country?.alpha2 || teamData.country?.alpha3 || null;
 
         if (existing.length > 0) {
-            // Update
             await db.query(
                 `UPDATE teams SET 
                 name = ?, short_name = ?, slug = ?, country = ?, country_code = ?,
                 updated_at = NOW()
                 WHERE id = ?`,
-                [name, shortName, teamData.slug || '', country, countryCode, existing[0].id]
+                [name, shortName, teamData.slug || '', countryName, countryCode, existing[0].id]
             );
             this.stats.teams.updated++;
             return existing[0].id;
         } else {
-            // Insert
             const result = await db.query(
                 `INSERT INTO teams 
                 (sofascore_team_id, name, short_name, slug, country, country_code)
                 VALUES (?, ?, ?, ?, ?, ?)`,
-                [teamData.id, name, shortName, teamData.slug || '', country, countryCode]
+                [teamData.id, name, shortName, teamData.slug || '', countryName, countryCode]
             );
             this.stats.teams.inserted++;
             return result.insertId;
         }
     }
 
+        
     /**
      * Upsert Season
      */

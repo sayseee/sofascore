@@ -33,6 +33,16 @@ class App {
             this.loadMatches(this.currentDate);
         });
 
+            // ⚡ Status filter buttons (in the status bar)
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                this.filterByStatus(btn.dataset.filter);
+            });
+        });
+
+
         document.getElementById('searchInput').addEventListener('input', (e) => {
             this.filterMatches(e.target.value);
         });
@@ -253,6 +263,23 @@ async loadSidebarData() {
                 filtered = filtered.filter(m => ![6, 7, 31, 32, 33, 100, 101, 102].includes(m.status));
             }
         }
+        
+        document.getElementById('matchCount').textContent = `${filtered.length} matches`;
+        this.renderMatches(filtered);
+    }
+
+    // New method for status filter
+    filterByStatus(statusFilter) {
+        let filtered = this.matches;
+        
+        if (statusFilter === 'live') {
+            filtered = filtered.filter(m => [6, 7, 31, 32, 33].includes(m.status));
+        } else if (statusFilter === 'finished') {
+            filtered = filtered.filter(m => [100, 101, 102].includes(m.status));
+        } else if (statusFilter === 'scheduled') {
+            filtered = filtered.filter(m => ![6, 7, 31, 32, 33, 100, 101, 102].includes(m.status));
+        }
+        // 'all' = no filter
         
         document.getElementById('matchCount').textContent = `${filtered.length} matches`;
         this.renderMatches(filtered);
