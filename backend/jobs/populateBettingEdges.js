@@ -1,13 +1,20 @@
 /**
  * Populate betting_edges from winning_odds data
  * Run: node jobs/populateBettingEdges.js
+ *       node jobs/populateBettingEdges.js --date 2026-05-12
  */
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const db = require('../config/database');
 
-async function populateBettingEdges() {
+async function populateBettingEdges(date = null) {
     await db.initialize();
-    console.log('💎 Populating betting_edges from winning_odds...\n');
+    
+    const dateFilter = date ? 'AND m.match_date = ?' : '';
+    const params = date ? [date, date] : [];
+    
+    console.log(`💎 Populating betting_edges from winning_odds...`);
+    if (date) console.log(`   Date: ${date}\n`);
+    else console.log(`   All dates\n`);
 
     // Insert home value bets
     const homeBets = await db.query(`
@@ -38,12 +45,14 @@ async function populateBettingEdges() {
             END,
             NOW()
         FROM winning_odds wo
+        JOIN matches m ON wo.match_id = m.id
         WHERE wo.home_is_value = 1
         AND wo.home_edge_percentage > 2
+        ${dateFilter}
         AND wo.match_id NOT IN (
             SELECT match_id FROM betting_edges WHERE market_type = '1X2' AND selection = 'home'
         )
-    `);
+    `, params);
     console.log(`   ✅ Home value bets: ${homeBets.affectedRows || 0}`);
 
     // Insert away value bets
@@ -75,15 +84,17 @@ async function populateBettingEdges() {
             END,
             NOW()
         FROM winning_odds wo
+        JOIN matches m ON wo.match_id = m.id
         WHERE wo.away_is_value = 1
         AND wo.away_edge_percentage > 2
+        ${dateFilter}
         AND wo.match_id NOT IN (
             SELECT match_id FROM betting_edges WHERE market_type = '1X2' AND selection = 'away'
         )
-    `);
+    `, params);
     console.log(`   ✅ Away value bets: ${awayBets.affectedRows || 0}`);
 
-    // Update confidence levels for existing bets
+    // Update confidence levels
     await db.query(`
         UPDATE betting_edges 
         SET confidence_level = 
@@ -95,12 +106,23 @@ async function populateBettingEdges() {
         WHERE confidence_level IS NULL
     `);
 
-    console.log(`\n✅ Betting edges populated successfully`);
+    const total = await db.query('SELECT COUNT(*) as cnt FROM betting_edges WHERE is_value_bet = 1');
+    console.log(`\n✅ Betting edges: ${total[0]?.cnt || 0} total value bets`);
     await db.close();
 }
 
+// CLI
 if (require.main === module) {
-    populateBettingEdges().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });
+    const args = process.argv.slice(2);
+    let date = null;
+    
+    if (args.includes('--date') && args.length >= 2) {
+        date = args[args.indexOf('--date') + 1];
+    }
+    
+    populateBettingEdges(date)
+        .then(() => process.exit(0))
+        .catch(e => { console.error(e); process.exit(1); });
 }
 
 module.exports = populateBettingEdges;

@@ -94,24 +94,82 @@ class ScheduledEventsCollector {
      * Process a single event and all its related data
      */
     async processEvent(event) {
-        // 1. Handle Tournament
-        const tournamentId = await this.upsertTournament(event.tournament);
+    const tournamentId = await this.upsertTournament(event.tournament);
+    const homeTeamId = await this.upsertTeam(event.homeTeam);
+    const awayTeamId = await this.upsertTeam(event.awayTeam);
+    const seasonId = await this.upsertSeason(tournamentId, event.season);
 
-        // 2. Handle Home Team
-        const homeTeamId = await this.upsertTeam(event.homeTeam);
-
-        // 3. Handle Away Team
-        const awayTeamId = await this.upsertTeam(event.awayTeam);
-
-        // 4. Handle Season
-        const seasonId = await this.upsertSeason(tournamentId, event.season);
-
-        // 5. Handle Match
-        if (tournamentId && homeTeamId && awayTeamId) {
-            await this.upsertMatch(event, tournamentId, seasonId, homeTeamId, awayTeamId);
-        }
+    // ⚡ Store round info for this tournament
+    if (tournamentId && event.roundInfo?.round) {
+        await this.updateTournamentRound(tournamentId, event.roundInfo.round);
     }
- 
+
+    if (tournamentId && homeTeamId && awayTeamId) {
+        await this.upsertMatch(event, tournamentId, seasonId, homeTeamId, awayTeamId);
+    }
+}
+
+    /**
+     * Update tournament with current round info
+     */
+    async updateTournamentRound(tournamentId, round) {
+        await db.query(
+            `UPDATE tournaments SET current_round = ? WHERE id = ? AND (current_round IS NULL OR current_round < ?)`,
+            [round, tournamentId, round]
+        );
+    }
+ async collectForTournament(t) {
+    console.log(`\n   🏆 ${t.tournament_name} - ${t.season_name}`);
+    
+    // ⚡ Get current round from tournaments table (stored by scheduledEvents)
+    const tournRow = await db.query('SELECT current_round FROM tournaments WHERE id = ?', [t.tournament_id]);
+    const currentRound = tournRow[0]?.current_round || 0;
+    
+    if (currentRound === 0) {
+        // Fallback: fetch rounds from API if not stored
+        const roundsData = await this.getRounds(t.unique_tournament_id, t.sofascore_season_id);
+        if (!roundsData) return { success: false };
+        const cr = roundsData.currentRound;
+        
+        // Store for next time
+        await db.query('UPDATE tournaments SET current_round = ? WHERE id = ?', [cr, t.tournament_id]);
+        
+        return this.fetchRounds(t, cr);
+    }
+    
+    console.log(`      📋 Current round: ${currentRound} (from DB)`);
+    return this.fetchRounds(t, currentRound);
+}
+
+async fetchRounds(t, currentRound) {
+    // Get current round + last 2 rounds
+    const roundsToFetch = [];
+    for (let r = Math.max(1, currentRound - 2); r <= currentRound; r++) {
+        roundsToFetch.push(r);
+    }
+
+    console.log(`      📋 Fetching rounds: ${roundsToFetch.join(', ')}`);
+
+    let totalInserted = 0, totalUpdated = 0;
+
+    for (const round of roundsToFetch) {
+        const result = await this.collectForRound(
+            t.unique_tournament_id,
+            t.sofascore_season_id,
+            round,
+            t.tournament_id,
+            t.season_id
+        );
+        if (result.success) {
+            totalInserted += (result.inserted || 0);
+            totalUpdated += (result.updated || 0);
+        }
+        await this.delay(2000);
+    }
+
+    console.log(`      ✅ +${totalInserted} new, ${totalUpdated} updated`);
+    return { success: true, inserted: totalInserted, updated: totalUpdated };
+}
      /**
      * Upsert Tournament - Fixed country/alpha extraction
      */
@@ -244,91 +302,105 @@ class ScheduledEventsCollector {
      * Upsert Match - The core function that saves match data
      */
     async upsertMatch(event, tournamentId, seasonId, homeTeamId, awayTeamId) {
-        const matchDateTime = event.startTimestamp 
-            ? new Date(event.startTimestamp * 1000)
-            : null;
-        const matchDate = matchDateTime 
-            ? matchDateTime.toISOString().split('T')[0]
-            : null;
+    const matchDateTime = event.startTimestamp 
+        ? new Date(event.startTimestamp * 1000)
+        : null;
+    const matchDate = matchDateTime 
+        ? matchDateTime.toISOString().split('T')[0]
+        : null;
 
-        const homeScore = event.homeScore?.current ?? null;
-        const awayScore = event.awayScore?.current ?? null;
-        const homeScoreHT = event.homeScore?.period1 ?? null;
-        const awayScoreHT = event.awayScore?.period1 ?? null;
+    const homeScore = event.homeScore?.current ?? null;
+    const awayScore = event.awayScore?.current ?? null;
+    const homeScoreHT = event.homeScore?.period1 ?? null;
+    const awayScoreHT = event.awayScore?.period1 ?? null;
 
-        const status = event.status?.code || 0;
-        const statusDesc = event.status?.description || null;
+    const status = event.status?.code || 0;
+    const statusDesc = event.status?.description || null;
 
-        const roundInfo = event.roundInfo?.round 
-            ? `Round ${event.roundInfo.round}` 
-            : null;
+    const roundInfo = event.roundInfo?.round 
+        ? `Round ${event.roundInfo.round}` 
+        : null;
 
-        // ⚡ Get unique_tournament_id from the event
-        const uniqueTournamentId = event.tournament?.uniqueTournament?.id || null;
+    const uniqueTournamentId = event.tournament?.uniqueTournament?.id || null;
 
-        const existing = await db.query(
-            'SELECT id, status, home_score, away_score FROM matches WHERE sofascore_match_id = ?',
-            [event.id]
-        );
+    // ⚡ Extract availability flags from the API response
+    // These tell us which data endpoints are available for this match
+    const hasLineups = event.hasEventPlayerStatistics || event.hasXg ? 1 : 0;
+    const hasStatistics = event.hasXg || event.hasEventPlayerStatistics ? 1 : 0;
+    const hasIncidents = event.hasGlobalHighlights || event.status?.code === 100 ? 1 : 0;
+    const hasPlayerStats = event.hasEventPlayerStatistics ? 1 : 0;
+    const hasHeatmap = event.hasEventPlayerHeatMap ? 1 : 0;
 
-        if (existing.length > 0) {
-            const current = existing[0];
-            const statusChanged = current.status !== status;
-            const scoreChanged = current.home_score !== homeScore || current.away_score !== awayScore;
-            
-            if (statusChanged || scoreChanged) {
-                await db.query(
-                    `UPDATE matches SET
-                    tournament_id = ?, season_id = ?, home_team_id = ?, away_team_id = ?,
-                    unique_tournament_id = ?,
-                    match_date = ?, match_datetime = ?, status = ?, status_description = ?,
-                    round_info = ?, home_score = ?, away_score = ?,
-                    home_score_halftime = ?, away_score_halftime = ?,
-                    custom_id = COALESCE(custom_id, ?),
-                    updated_at = NOW()
-                    WHERE id = ?`,
-                    [
-                        tournamentId, seasonId, homeTeamId, awayTeamId,
-                        uniqueTournamentId,
-                        matchDate, matchDateTime, status, statusDesc,
-                        roundInfo, homeScore, awayScore,
-                        homeScoreHT, awayScoreHT,
-                        event.customId || null,
-                        current.id
-                    ]
-                );
-                this.stats.matches.updated++;
-            }
-        } else {
+    const existing = await db.query(
+        'SELECT id, status, home_score, away_score FROM matches WHERE sofascore_match_id = ?',
+        [event.id]
+    );
+
+    if (existing.length > 0) {
+        const current = existing[0];
+        const statusChanged = current.status !== status;
+        const scoreChanged = current.home_score !== homeScore || current.away_score !== awayScore;
+        
+        if (statusChanged || scoreChanged) {
             await db.query(
-                `INSERT INTO matches 
-                (sofascore_match_id, custom_id, tournament_id, unique_tournament_id, season_id,
-                home_team_id, away_team_id, match_date, match_datetime,
-                status, status_description, round_info,
-                home_score, away_score, home_score_halftime, away_score_halftime)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `UPDATE matches SET
+                tournament_id = ?, season_id = ?, home_team_id = ?, away_team_id = ?,
+                unique_tournament_id = ?,
+                match_date = ?, match_datetime = ?, status = ?, status_description = ?,
+                round_info = ?, home_score = ?, away_score = ?,
+                home_score_halftime = ?, away_score_halftime = ?,
+                custom_id = COALESCE(custom_id, ?),
+                has_lineups = CASE WHEN has_lineups = 1 THEN 1 ELSE has_lineups END,
+                has_statistics = CASE WHEN has_statistics = 1 THEN 1 ELSE has_statistics END,
+                has_incidents = CASE WHEN has_incidents = 1 THEN 1 ELSE has_incidents END,
+                updated_at = NOW()
+                WHERE id = ?`,
                 [
-                    event.id,
-                    event.customId || null,
-                    tournamentId,
+                    tournamentId, seasonId, homeTeamId, awayTeamId,
                     uniqueTournamentId,
-                    seasonId,
-                    homeTeamId,
-                    awayTeamId,
-                    matchDate,
-                    matchDateTime,
-                    status,
-                    statusDesc,
-                    roundInfo,
-                    homeScore,
-                    awayScore,
-                    homeScoreHT,
-                    awayScoreHT
+                    matchDate, matchDateTime, status, statusDesc,
+                    roundInfo, homeScore, awayScore,
+                    homeScoreHT, awayScoreHT,
+                    event.customId || null,
+                    current.id
                 ]
             );
-            this.stats.matches.inserted++;
+            this.stats.matches.updated++;
         }
+    } else {
+        await db.query(
+            `INSERT INTO matches 
+            (sofascore_match_id, custom_id, tournament_id, unique_tournament_id, season_id,
+            home_team_id, away_team_id, match_date, match_datetime,
+            status, status_description, round_info,
+            home_score, away_score, home_score_halftime, away_score_halftime,
+            has_lineups, has_statistics, has_incidents)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                event.id,
+                event.customId || null,
+                tournamentId,
+                uniqueTournamentId,
+                seasonId,
+                homeTeamId,
+                awayTeamId,
+                matchDate,
+                matchDateTime,
+                status,
+                statusDesc,
+                roundInfo,
+                homeScore,
+                awayScore,
+                homeScoreHT,
+                awayScoreHT,
+                hasLineups,
+                hasStatistics,
+                hasIncidents
+            ]
+        );
+        this.stats.matches.inserted++;
     }
+}
 
     /**
      * Collect for a range of dates

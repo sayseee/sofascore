@@ -13,7 +13,7 @@
 </head>
 <body>
     <div id="app">
-        <!-- Top Bar - Compact with status inline -->
+        <!-- Top Bar -->
         <header class="topbar">
             <div class="topbar-left">
                 <span class="brand-icon">⚽</span>
@@ -21,7 +21,7 @@
             </div>
             
             <div class="topbar-center">
-                <input type="date" id="datePicker" class="date-picker">
+                <input type="date" id="datePicker" class="date-picker" value="2026-05-12">
                 <button id="loadDateBtn" class="btn-sm">Load</button>
             </div>
             
@@ -35,11 +35,11 @@
             </div>
         </header>
 
-        <!-- Status Bar - Inline right above content -->
+        <!-- Status Bar -->
         <div class="status-bar">
             <div class="status-left">
                 <span class="status-label">SCHEDULED EVENTS</span>
-                <span class="status-date" id="statusDate">2026-05-10</span>
+                <span class="status-date" id="statusDate">2026-05-12</span>
             </div>
             <div class="status-right">
                 <span class="status-filter">
@@ -53,9 +53,8 @@
         </div>
 
         <!-- Main Layout -->
-        <!-- Main Layout -->
         <div class="app-layout">
-            <!-- Left Panel - Filters & Search -->
+            <!-- Left Panel -->
             <aside class="sidebar">
                 <div class="sidebar-section">
                     <h3>🔍 Search</h3>
@@ -78,7 +77,7 @@
                 <div class="content-row">
                     <div class="row-header">
                         <span class="row-label">📅 SCHEDULED EVENTS</span>
-                        <span class="row-date" id="statusDate">2026-05-10</span>
+                        <span class="row-date" id="rowStatusDate">2026-05-12</span>
                         <span class="status-filter">
                             <button class="filter-btn active" data-filter="all">All</button>
                             <button class="filter-btn" data-filter="scheduled">Scheduled</button>
@@ -90,39 +89,45 @@
                         <table class="match-table" id="matchTable">
                             <thead>
                                 <tr>
-                                    <th>Time</th>
-                                    <th>Home</th>
-                                    <th></th>
-                                    <th>Away</th>
-                                    <th>Tournament</th>
-                                    <th>1</th>
-                                    <th>X</th>
-                                    <th>2</th>
-                                    <th>Edge</th>
-                                    <th>H Win%</th>
-                                    <th>A Win%</th>
+                                    <th>Time</th><th>Home</th><th></th><th>Away</th>
+                                    <th>Tournament</th><th>1</th><th>X</th><th>2</th>
+                                    <th>Edge</th><th>H Win%</th><th>A Win%</th>
                                 </tr>
                             </thead>
                             <tbody id="matchTableBody">
-                                <tr><td colspan="9" class="loading-text">Loading...</td></tr>
+                                <tr><td colspan="11" class="loading-text">Loading...</td></tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
 
-                <!-- Row 2: Top Value Bets -->
+                <!-- Row 2: Value Bets - Three Panels -->
                 <div class="content-row" id="valueBetsRow">
                     <div class="row-header">
                         <span class="row-label">💎 TOP VALUE BETS (Winning Odds Edge)</span>
                         <span id="valueBetCount" class="row-count">0 bets</span>
                     </div>
-                    <div class="value-bets-scroll" id="valueBetsContainer">
-                        <div class="loading-text">Loading value bets...</div>
+                    <div class="value-bets-panels">
+                        <!-- HIGH Confidence -->
+                        <div class="vb-panel high">
+                            <div class="vb-panel-header">🔥 HIGH CONFIDENCE</div>
+                            <div class="vb-panel-scroll" id="valueBetsHigh"></div>
+                        </div>
+                        <!-- MEDIUM Confidence -->
+                        <div class="vb-panel medium">
+                            <div class="vb-panel-header">📊 MEDIUM CONFIDENCE</div>
+                            <div class="vb-panel-scroll" id="valueBetsMedium"></div>
+                        </div>
+                        <!-- LOW Confidence -->
+                        <div class="vb-panel low">
+                            <div class="vb-panel-header">📈 LOW CONFIDENCE</div>
+                            <div class="vb-panel-scroll" id="valueBetsLow"></div>
+                        </div>
                     </div>
                 </div>
             </main>
 
-            <!-- Right Panel - Standings -->
+            <!-- Right Panel -->
             <aside class="detail-panel" id="detailPanel">
                 <div class="panel-section">
                     <h4>🏆 STANDINGS</h4>
@@ -139,7 +144,7 @@
             </aside>
         </div>
 
-        <!-- Match Detail Modal -->
+        <!-- Match Modal -->
         <div class="modal-overlay" id="matchModal" style="display:none;">
             <div class="modal-content">
                 <div class="modal-header">
@@ -149,6 +154,38 @@
                 <div class="modal-body" id="modalBody">
                     <div class="loading-text">Loading analysis...</div>
                 </div>
+            </div>
+        </div>
+<div id="aiAssistantContainer"></div>
+        <!-- Pipeline Overlay -->
+        <div id="pipelineOverlay" style="display:none;">
+            <div class="pipeline-container">
+                <h2>📡 Collecting Data for <span id="pipelineDate">...</span></h2>
+                
+                <div class="pipeline-progress">
+                    <div class="progress-bar-large">
+                        <div id="pipelineProgressFill" class="progress-fill" style="width:0%;"></div>
+                    </div>
+                    <div class="pipeline-stats">
+                        <span id="pipelinePercent">0%</span>
+                        <span id="pipelineStep">Initializing...</span>
+                    </div>
+                </div>
+
+                <div class="pipeline-phases" id="pipelinePhases">
+                    <div class="phase" data-phase="1"><span class="phase-icon">📅</span><span class="phase-label">Match Data</span><span class="phase-status">⏳</span></div>
+                    <div class="phase" data-phase="2"><span class="phase-icon">📍</span><span class="phase-label">Venue & Context</span><span class="phase-status">⏳</span></div>
+                    <div class="phase" data-phase="3"><span class="phase-icon">🎲</span><span class="phase-label">Odds Data</span><span class="phase-status">⏳</span></div>
+                    <div class="phase" data-phase="4"><span class="phase-icon">🏆</span><span class="phase-label">Standings</span><span class="phase-status">⏳</span></div>
+                    <div class="phase" data-phase="5"><span class="phase-icon">📋</span><span class="phase-label">Match Details</span><span class="phase-status">⏳</span></div>
+                    <div class="phase" data-phase="6"><span class="phase-icon">👥</span><span class="phase-label">Team Data</span><span class="phase-status">⏳</span></div>
+                    <div class="phase" data-phase="7"><span class="phase-icon">⚔️</span><span class="phase-label">H2H Data</span><span class="phase-status">⏳</span></div>
+                    <div class="phase" data-phase="8"><span class="phase-icon">👔</span><span class="phase-label">Manager Records</span><span class="phase-status">⏳</span></div>
+                    <div class="phase" data-phase="9"><span class="phase-icon">💎</span><span class="phase-label">Derived Data</span><span class="phase-status">⏳</span></div>
+                    <div class="phase" data-phase="10"><span class="phase-icon">🤖</span><span class="phase-label">Predictions</span><span class="phase-status">⏳</span></div>
+                </div>
+
+                <p class="pipeline-note">This may take 2-5 minutes. Data appears automatically when ready.</p>
             </div>
         </div>
     </div>

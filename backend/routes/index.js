@@ -8,6 +8,7 @@ router.use('/analytics', require('./analyticsRoutes'));
 router.use('/predictions', require('./predictionRoutes'));
 router.use('/ingestion', require('./ingestionRoutes'));
 router.use('/ai', require('./aiRoutes'));
+router.use('/pipeline', require('./pipelineRoutes'));
 
 router.get('/', (req, res) => {
     res.json({
@@ -19,11 +20,11 @@ router.get('/', (req, res) => {
             odds: '/api/odds',
             analytics: '/api/analytics',
             predictions: '/api/predictions',
+            pipeline: '/api/pipeline',
             ingestion: '/api/ingestion',
-            ai: '/api/ai'
+            ai: '/api/ai',
         }
     });
 });
 
 module.exports = router;
-

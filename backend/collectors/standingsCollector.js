@@ -1,10 +1,6 @@
 /**
  * Standings Collector
  * Endpoint: /unique-tournament/{uniqueTournamentId}/season/{apiSeasonId}/standings/total
- * 
- * DB: standings.season_id → seasons.id (auto-increment)
- * DB: standings.tournament_id → tournaments.id (auto-increment)
- * API: uses unique_tournament_id + sofascore_season_id
  */
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const httpClient = require('../utils/httpClient');
@@ -19,21 +15,19 @@ class StandingsCollector {
         if (!db.isConnected) await db.initialize();
     }
 
-    delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
+    delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
     async collectForTournament(uniqueTournamentId, apiSeasonId, dbTournamentId, dbSeasonId) {
         try {
             await this.initialize();
             
             const endpoint = `/unique-tournament/${uniqueTournamentId}/season/${apiSeasonId}/standings/total`;
-            console.log(`🏆 Standings: ${endpoint}`);
+            console.log(`   🏆 ${endpoint}`);
             
             const response = await httpClient.get(endpoint);
             
             if (!response || !response.standings) {
-                console.log('   No standings data');
+                console.log('      No standings data');
                 return { success: false, error: 'No data' };
             }
 
@@ -62,106 +56,135 @@ class StandingsCollector {
                                     goal_difference = VALUES(goal_difference),
                                     last_updated = NOW()`,
                                 [
-                                    dbTournamentId,
-                                    dbSeasonId,
-                                    teamId,
-                                    row.position || 0,
-                                    row.points || 0,
-                                    row.matches || 0,
-                                    row.wins || 0,
-                                    row.draws || 0,
-                                    row.losses || 0,
-                                    row.scoresFor || 0,
-                                    row.scoresAgainst || 0,
+                                    dbTournamentId, dbSeasonId, teamId,
+                                    row.position || 0, row.points || 0,
+                                    row.matches || 0, row.wins || 0, row.draws || 0, row.losses || 0,
+                                    row.scoresFor || 0, row.scoresAgainst || 0,
                                     parseInt(String(row.scoreDiffFormatted || '0').replace(/[+]/g, ''))
                                 ]
                             );
                             inserted++;
                         } catch (err) {
                             if (err.code !== 'ER_DUP_ENTRY') {
-                                console.error(`   SQL Error: ${err.message}`);
+                                console.error(`      SQL Error: ${err.message}`);
                             }
                         }
                     }
                 }
             }
 
-            console.log(`   ✅ ${inserted} standings rows`);
+            console.log(`      ✅ ${inserted} rows`);
             return { success: true, inserted };
-
         } catch (error) {
-            console.error(`   ❌ Error: ${error.message}`);
+            console.error(`      ❌ ${error.message}`);
             return { success: false, error: error.message };
         }
     }
 
     async upsertTeam(teamData) {
         if (!teamData?.id) return null;
-        
         await db.query(
             `INSERT INTO teams (sofascore_team_id, name, short_name, slug, country, country_code)
             VALUES (?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE name = VALUES(name), updated_at = NOW()`,
-            [
-                teamData.id,
-                teamData.name || 'Unknown',
-                (teamData.shortName || teamData.name || 'UNK').substring(0, 10),
-                teamData.slug || '',
-                teamData.country?.name || null,
-                teamData.country?.alpha2 || null
-            ]
+            [teamData.id, teamData.name || 'Unknown', (teamData.shortName || teamData.name || 'UNK').substring(0, 10),
+             teamData.slug || '', teamData.country?.name || null, teamData.country?.alpha2 || null]
         );
-        
         const result = await db.query('SELECT id FROM teams WHERE sofascore_team_id = ?', [teamData.id]);
         return result[0]?.id || null;
     }
 
     async collectActiveTournaments() {
         await this.initialize();
-        
         const seasons = await db.query(
             `SELECT s.id AS db_season_id, s.sofascore_season_id AS api_season_id, s.name AS season_name,
                     t.id AS db_tournament_id, t.unique_tournament_id, t.name AS tournament_name
-            FROM seasons s
-            JOIN tournaments t ON s.tournament_id = t.id
-            WHERE s.is_current = 1
-            LIMIT 20`
+            FROM seasons s JOIN tournaments t ON s.tournament_id = t.id
+            WHERE s.is_current = 1 LIMIT 20`
         );
-
         console.log(`\n📊 Standings for ${seasons.length} active seasons:\n`);
-        
         for (const s of seasons) {
             console.log(`   ${s.tournament_name} - ${s.season_name}`);
-            console.log(`   DB: tournament_id=${s.db_tournament_id}, season_id=${s.db_season_id}`);
-            console.log(`   API: unique=${s.unique_tournament_id}, season=${s.api_season_id}\n`);
-            
-            try {
-                await this.collectForTournament(
-                    s.unique_tournament_id || s.db_tournament_id,
-                    s.api_season_id,
-                    s.db_tournament_id,
-                    s.db_season_id
-                );
-            } catch (e) {
-                console.log(`   ⚠️ Failed: ${e.message}\n`);
-            }
+            await this.collectForTournament(s.unique_tournament_id || s.db_tournament_id, s.api_season_id, s.db_tournament_id, s.db_season_id);
             await this.delay(2000);
         }
-        
         console.log(`\n✅ Standings collection complete`);
         await db.close();
     }
+
+    /**
+     * ⚡ NEW: Collect standings for tournaments that have matches on a specific date
+     */
+    async collectForDate(date) {
+        await this.initialize();
+        
+        // Get unique tournaments from matches on this date
+        const tournaments = await db.query(
+            `SELECT DISTINCT t.id AS db_tournament_id, t.unique_tournament_id, t.name AS tournament_name,
+                    s.id AS db_season_id, s.sofascore_season_id AS api_season_id, s.name AS season_name
+            FROM matches m
+            JOIN tournaments t ON m.tournament_id = t.id
+            JOIN seasons s ON m.season_id = s.id
+            WHERE m.match_date = ?
+            AND t.unique_tournament_id IS NOT NULL
+            AND s.sofascore_season_id IS NOT NULL`,
+            [date]
+        );
+
+        if (tournaments.length === 0) {
+            console.log(`\n📊 No tournaments found for ${date}\n`);
+            await db.close();
+            return [];
+        }
+
+        console.log(`\n${'═'.repeat(60)}`);
+        console.log(`📊 STANDINGS FOR: ${date}`);
+        console.log(`   Tournaments: ${tournaments.length}`);
+        console.log(`${'═'.repeat(60)}\n`);
+
+        let success = 0, failed = 0;
+
+        for (const t of tournaments) {
+            console.log(`   ${t.tournament_name} - ${t.season_name}`);
+            
+            const result = await this.collectForTournament(
+                t.unique_tournament_id,
+                t.api_season_id,
+                t.db_tournament_id,
+                t.db_season_id
+            );
+            
+            if (result.success) success++;
+            else failed++;
+            
+            await this.delay(2000);
+        }
+
+        console.log(`\n✅ ${success} ok, ${failed} failed`);
+        await db.close();
+        return { success, failed };
+    }
 }
 
+// CLI
 if (require.main === module) {
     const collector = new StandingsCollector();
-    const arg = process.argv[2];
-    
+    const args = process.argv.slice(2);
+
     (async () => {
-        if (arg === '--all') {
-            await collector.collectActiveTournaments();
-        } else {
-            console.log('Usage: node collectors/standingsCollector.js --all');
+        try {
+            if (args.includes('--date') && args.length >= 2) {
+                const date = args[args.indexOf('--date') + 1];
+                await collector.collectForDate(date);
+            } else if (args.includes('--all')) {
+                await collector.collectActiveTournaments();
+            } else {
+                console.log('Usage:');
+                console.log('  node collectors/standingsCollector.js --all');
+                console.log('  node collectors/standingsCollector.js --date YYYY-MM-DD');
+            }
+        } catch (e) {
+            console.error('Fatal:', e.message);
         }
         process.exit(0);
     })();

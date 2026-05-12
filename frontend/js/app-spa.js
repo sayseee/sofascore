@@ -1,474 +1,582 @@
-/**
- * Sofascore Analytics - Scheduled Events with Odds & Winning Odds
- */
 import ApiClient from './api-client.js';
+import AIAssistant from './modules/ai-assistant.js';  // ← Must be exactly this path
 
 class App {
     constructor() {
         this.apiClient = new ApiClient('http://localhost:3000/api');
+        this.aiAssistant = new AIAssistant(this.apiClient);  // ← ADD THIS LINE
         this.currentDate = new Date().toISOString().split('T')[0];
         this.matches = [];
         this.selectedMatchId = null;
-        
         this.init();
     }
 
     async init() {
         console.log('⚽ Sofascore Analytics Initializing...');
         this.setupEventListeners();
+        this.aiAssistant.init();  // ← ADD THIS LINE
+        await this.ensureDataAvailable(this.currentDate);
         await this.loadMatches(this.currentDate);
-    await this.loadValueBets();  // ← Add this
+        await this.loadValueBets();
         await this.loadSidebarData();
         console.log('✅ Ready');
     }
 
-    setupEventListeners() {
-        document.getElementById('datePicker').value = this.currentDate;
-        
-        document.getElementById('loadDateBtn').addEventListener('click', () => {
-            this.currentDate = document.getElementById('datePicker').value;
-            this.loadMatches(this.currentDate);
-        });
-
-        document.getElementById('refreshBtn').addEventListener('click', () => {
-            this.loadMatches(this.currentDate);
-        });
-
-            // ⚡ Status filter buttons (in the status bar)
-        document.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                this.filterByStatus(btn.dataset.filter);
-            });
-        });
-
-
-        document.getElementById('searchInput').addEventListener('input', (e) => {
-            this.filterMatches(e.target.value);
-        });
-
-        document.querySelectorAll('input[name="status"]').forEach(radio => {
-            radio.addEventListener('change', () => this.filterMatches(this.getSearchTerm()));
-        });
-
-        document.querySelectorAll('input[name="tournament"]').forEach(radio => {
-            radio.addEventListener('change', () => this.filterMatches(this.getSearchTerm()));
-        });
-
-        document.getElementById('searchInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.filterMatches(e.target.value);
-        });
-
-        document.getElementById('modalClose').addEventListener('click', () => this.closeModal());
-        document.getElementById('matchModal').addEventListener('click', (e) => {
-            if (e.target === document.getElementById('matchModal')) this.closeModal();
-        });
-    }
-
-    getSearchTerm() {
-        return document.getElementById('searchInput').value;
-    }
-
-    /**
-     * Load matches with odds and winning odds in ONE call
-     */
-    async loadMatches(date) {
-    const tbody = document.getElementById('matchTableBody');
-    tbody.innerHTML = '<tr><td colspan="11" class="loading-text">Loading matches...</td></tr>';
-
-    try {
-        const response = await this.apiClient.get('/matches/with-odds', { date });
-        // ⚡ FIX: Extract data from response
-        this.matches = response.data || response || [];
-        
-        document.getElementById('matchCount').textContent = `${this.matches.length} matches`;
-        document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
-        
-        this.renderMatches(this.matches);
-    } catch (error) {
-        console.error('Failed to load matches:', error);
-        tbody.innerHTML = '<tr><td colspan="11" class="loading-text">Failed to load matches</td></tr>';
-    }
-}
-
-async loadSidebarData() {
-    try {
-        const response = await this.apiClient.get('/matches/with-odds', { date: this.currentDate });
-        // ⚡ FIX: Extract data from response
-        const matches = response.data || response || [];
-        
-        const uniqueTournaments = [...new Set(matches.map(m => m.tournament).filter(Boolean))];
-        
-        const filterDiv = document.getElementById('tournamentFilters');
-        filterDiv.innerHTML = `
-            <label class="filter-item active">
-                <input type="radio" name="tournament" value="all" checked> All
-            </label>
-            ${uniqueTournaments.map(t => `
-                <label class="filter-item">
-                    <input type="radio" name="tournament" value="${t}"> ${t}
-                </label>
-            `).join('')}
-        `;
-
-        document.querySelectorAll('input[name="tournament"]').forEach(radio => {
-            radio.addEventListener('change', () => this.filterMatches(this.getSearchTerm()));
-        });
-
+    async ensureDataAvailable(date) {
         try {
-            const valueBetsRes = await this.apiClient.getValueBets();
-            const valueBets = valueBetsRes.data || valueBetsRes || [];
-            document.getElementById('valueCount').textContent = `${bets.length} value bets`;
-        } catch (e) {}
-    } catch (error) {
-        console.error('Failed to load sidebar:', error);
+            const res = await this.apiClient.getPipelineStatus(date);
+            const status = res.data || res;
+            console.log(`📊 Data: ${status.progress}% (${status.tables?.matches || 0} matches)`);
+            
+            if (status.progress < 50 || !status.tables?.matches) {
+                this.showPipelineOverlay(date);
+                await this.apiClient.triggerPipeline(date);
+                await this.pollPipelineProgress(date);
+                this.hidePipelineOverlay();
+            }
+        } catch (e) {
+            console.warn('Pipeline check failed, proceeding:', e.message);
+        }
     }
+
+    showPipelineOverlay(date) {
+        const overlay = document.getElementById('pipelineOverlay');
+        if (overlay) {
+            overlay.style.display = 'flex';
+            document.getElementById('pipelineDate').textContent = date;
+        }
+    }
+
+    hidePipelineOverlay() {
+        const overlay = document.getElementById('pipelineOverlay');
+        if (overlay) overlay.style.display = 'none';
+    }
+
+    async pollPipelineProgress(date) {
+        const maxAttempts = 60;
+        let attempts = 0;
+        
+        while (attempts < maxAttempts) {
+            await new Promise(r => setTimeout(r, 3000));
+            
+            try {
+                // Get running job info
+                const progRes = await this.apiClient.get('/pipeline/progress');
+                const jobs = progRes.data || [];
+                
+                // ⚡ Find the job for THIS date
+                const currentJob = jobs.find(j => j.date === date) || jobs[0];
+                
+                // Get data completion status
+                const res = await this.apiClient.getPipelineStatus(date);
+                const status = res.data || res;
+                
+                // Update progress bar
+                const fill = document.getElementById('pipelineProgressFill');
+                const percent = document.getElementById('pipelinePercent');
+                const step = document.getElementById('pipelineStep');
+                
+                // Use job progress if available, otherwise data status
+                const displayProgress = currentJob?.progress || status.progress || 0;
+                
+                if (fill) fill.style.width = `${displayProgress}%`;
+                if (percent) percent.textContent = `${displayProgress}%`;
+                
+                // Show current step from running job
+                if (currentJob && currentJob.currentStep) {
+                    let stepText = currentJob.currentStep;
+                    
+                    // Add details if available
+                    if (currentJob.details) {
+                        const d = currentJob.details;
+                        if (d.matches) stepText = `✅ Found ${d.matches} matches`;
+                        if (d.bettingEdges) stepText = `✅ ${d.bettingEdges} value bets found`;
+                    }
+                    
+                    if (step) step.textContent = stepText;
+                    
+                    // Update phase indicators
+                    const currentPhase = currentJob.currentPhase || 0;
+                    
+                    document.querySelectorAll('.phase').forEach(el => {
+                        const phase = parseInt(el.dataset.phase);
+                        const statusEl = el.querySelector('.phase-status');
+                        
+                        el.classList.remove('complete', 'active');
+                        
+                        if (phase < currentPhase) {
+                            el.classList.add('complete');
+                            if (statusEl) statusEl.textContent = '✅';
+                        } else if (phase === currentPhase) {
+                            el.classList.add('active');
+                            if (statusEl) statusEl.textContent = '🔄';
+                        } else {
+                            if (statusEl) statusEl.textContent = '⏳';
+                        }
+                    });
+                }
+                
+                // Also update from data status
+                if (status.progress >= 80 || displayProgress >= 100) {
+                    // Mark all complete
+                    document.querySelectorAll('.phase').forEach(el => {
+                        el.classList.add('complete');
+                        const s = el.querySelector('.phase-status');
+                        if (s) s.textContent = '✅';
+                    });
+                    if (fill) fill.style.width = '100%';
+                    if (percent) percent.textContent = '100%';
+                    if (step) step.textContent = '✅ All data collected!';
+                    await new Promise(r => setTimeout(r, 1000));
+                    return;
+                }
+                
+            } catch (e) {
+                console.warn('Progress check:', e.message);
+            }
+            attempts++;
+        }
+        
+        // Timeout - hide overlay and load whatever we have
+        console.log('⏰ Pipeline timeout, loading available data');
+    }
+
+    setupEventListeners() {
+    // Set date picker to today
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const todayFormatted = `${yyyy}-${mm}-${dd}`;
+    
+    document.getElementById('datePicker').value = todayFormatted;
+    this.currentDate = todayFormatted;
+    document.getElementById('statusDate').textContent = todayFormatted;
+    document.getElementById('rowStatusDate').textContent = todayFormatted;
+
+    // ⚡ Load button - reload everything for new date
+    document.getElementById('loadDateBtn').addEventListener('click', async () => {
+        const newDate = document.getElementById('datePicker').value;
+        if (newDate && newDate !== this.currentDate) {
+            this.currentDate = newDate;
+            document.getElementById('statusDate').textContent = newDate;
+            document.getElementById('rowStatusDate').textContent = newDate;
+            
+            // Show loading state in both panels
+            document.getElementById('matchTableBody').innerHTML = 
+                '<tr><td colspan="11" class="loading-text">Loading matches for ' + newDate + '...</td></tr>';
+            
+            document.getElementById('valueBetsHigh').innerHTML = 
+                '<div class="loading-text" style="font-size:9px;padding:8px;">Loading...</div>';
+            document.getElementById('valueBetsMedium').innerHTML = 
+                '<div class="loading-text" style="font-size:9px;padding:8px;">Loading...</div>';
+            document.getElementById('valueBetsLow').innerHTML = 
+                '<div class="loading-text" style="font-size:9px;padding:8px;">Loading...</div>';
+            
+            // ⚡ Check if data exists for this date
+            await this.ensureDataAvailable(newDate);
+            
+            // ⚡ Reload BOTH matches AND value bets
+            await this.loadMatches(newDate);
+            await this.loadValueBets();
+            await this.loadSidebarData();
+        }
+    });
+
+    // Refresh button - reload current date
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+        this.loadMatches(this.currentDate);
+        this.loadValueBets();
+    });
+
+    // Status filter buttons
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            this.filterByStatus(btn.dataset.filter);
+        });
+    });
+
+    // Search
+    document.getElementById('searchInput').addEventListener('input', e => {
+        this.filterMatches(e.target.value);
+    });
+    document.getElementById('searchInput').addEventListener('keypress', e => {
+        if (e.key === 'Enter') this.filterMatches(e.target.value);
+    });
+
+    // Modal
+    document.getElementById('modalClose').addEventListener('click', () => this.closeModal());
+    document.getElementById('matchModal').addEventListener('click', e => {
+        if (e.target === document.getElementById('matchModal')) this.closeModal();
+    });
 }
-async loadValueBets() {
-    const container = document.getElementById('valueBetsContainer');
+
+    async loadMatches(date) {
+        const tbody = document.getElementById('matchTableBody');
+        tbody.innerHTML = '<tr><td colspan="11" class="loading-text">Loading...</td></tr>';
+        try {
+            const response = await this.apiClient.get('/matches/with-odds', { date });
+            this.matches = response.data || response || [];
+            document.getElementById('matchCount').textContent = `${this.matches.length} matches`;
+            document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+            document.getElementById('statusDate').textContent = date;
+            this.renderMatches(this.matches);
+        } catch(e) {
+            tbody.innerHTML = '<tr><td colspan="11" class="loading-text">Failed to load</td></tr>';
+        }
+    }
+
+    async loadSidebarData() {
+        try {
+            const response = await this.apiClient.get('/matches/with-odds', { date: this.currentDate });
+            const matches = response.data || response || [];
+            const uniqueTournaments = [...new Set(matches.map(m => m.tournament).filter(Boolean))];
+            const filterDiv = document.getElementById('tournamentFilters');
+            filterDiv.innerHTML = `
+                <label class="filter-item active"><input type="radio" name="tournament" value="all" checked> All</label>
+                ${uniqueTournaments.map(t => `<label class="filter-item"><input type="radio" name="tournament" value="${t}"> ${t}</label>`).join('')}
+            `;
+            document.querySelectorAll('input[name="tournament"]').forEach(radio => {
+                radio.addEventListener('change', () => this.filterMatches(this.getSearchTerm()));
+            });
+        } catch(e) {}
+    }
+
+    async loadValueBets(date = null) {
+    const highEl = document.getElementById('valueBetsHigh');
+    const medEl = document.getElementById('valueBetsMedium');
+    const lowEl = document.getElementById('valueBetsLow');
     const countEl = document.getElementById('valueBetCount');
     
-    if (!container) return;
+    if (!highEl || !medEl || !lowEl) return;
     
-    container.innerHTML = '<div class="loading-text">Loading value bets...</div>';
+    [highEl, medEl, lowEl].forEach(el => 
+        el.innerHTML = '<div class="loading-text" style="font-size:9px;padding:8px;">Loading...</div>'
+    );
     
     try {
-        const res = await this.apiClient.getValueBets();
+        const queryDate = date || this.currentDate;
+        // ⚡ Pass date to API
+        const res = await this.apiClient.getValueBets(queryDate);
         const bets = res.data || res || [];
         
-        countEl.textContent = `${bets.length} bets`;
+        const high = bets.filter(b => b.confidence_level === 'high');
+        const medium = bets.filter(b => b.confidence_level === 'medium');
+        const low = bets.filter(b => b.confidence_level === 'low');
         
-        if (bets.length === 0) {
-            container.innerHTML = '<div class="text-muted">No value bets found. Run winningOddsCollector first.</div>';
-            return;
-        }
-
-        container.innerHTML = bets.map(bet => {
-            const confidenceClass = bet.confidence_level === 'high' ? 'positive' : 
-                                   bet.confidence_level === 'medium' ? 'positive' : '';
-            return `
-                <div class="value-bet-mini" data-match-id="${bet.match_id}">
-                    <span style="flex:1;">
-                        <strong>${bet.home_team_name || '?'}</strong> vs ${bet.away_team_name || '?'}
-                    </span>
-                    <span style="font-size:9px;color:var(--text-tertiary);margin:0 6px;">
-                        ${bet.selection} @ ${bet.bookmaker_odds}
-                    </span>
-                    <span class="edge-badge ${confidenceClass}">
-                        ${bet.confidence_level?.toUpperCase() || 'LOW'}
-                    </span>
-                    <span class="edge-badge positive" style="margin-left:4px;">
-                        +${bet.edge_percentage}% EV
-                    </span>
-                </div>
-            `;
-        }).join('');
-
-        // Click handler
-        container.querySelectorAll('.value-bet-mini').forEach(el => {
-            el.addEventListener('click', () => {
-                const matchId = el.dataset.matchId;
-                this.openMatchModal(matchId);
-            });
-        });
-
-    } catch (error) {
-        container.innerHTML = '<div class="text-muted">Failed to load value bets</div>';
+        if (countEl) countEl.textContent = `${bets.length} bets (${high.length}H/${medium.length}M/${low.length}L)`;
+        document.getElementById('valueCount').textContent = `${bets.length} value bets`;
+        
+        highEl.innerHTML = this.renderBetPanel(high, 'high');
+        medEl.innerHTML = this.renderBetPanel(medium, 'medium');
+        lowEl.innerHTML = this.renderBetPanel(low, 'low');
+        
+    } catch(e) {
+        [highEl, medEl, lowEl].forEach(el => 
+            el.innerHTML = '<div class="text-muted" style="font-size:9px;padding:8px;">Failed</div>'
+        );
     }
 }
+
+    renderBetPanel(bets, level) {
+    if (bets.length === 0) return `<div class="text-muted" style="font-size:9px;padding:8px;">None</div>`;
+    
+    return bets.map(bet => `
+        <div class="value-bet-mini" onclick="window.app.openMatchModal(${bet.match_id})" style="cursor:pointer;padding:3px 6px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:9px;flex:1;">
+                    <strong>${bet.home_team_name||'?'}</strong> vs ${bet.away_team_name||'?'}
+                </span>
+                <span style="font-size:8px;color:var(--accent-primary);font-weight:600;">+${bet.edge_percentage}%</span>
+            </div>
+            <div style="font-size:8px;color:var(--text-tertiary);margin-top:1px;">
+                ${bet.selection} @ ${bet.bookmaker_odds} | EV: ${bet.expected_value > 0 ? '+' : ''}${(bet.expected_value * 100).toFixed(1)}%
+            </div>
+        </div>
+    `).join('');
+}
+
     renderMatches(matches) {
         const tbody = document.getElementById('matchTableBody');
-        
-        if (matches.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="11" class="loading-text">No matches found for this date</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = matches.map(match => this.createMatchRow(match)).join('');
-
+        if (matches.length === 0) { tbody.innerHTML = '<tr><td colspan="11" class="loading-text">No matches</td></tr>'; return; }
+        tbody.innerHTML = matches.map(m => this.createMatchRow(m)).join('');
         tbody.querySelectorAll('tr').forEach(row => {
-            row.addEventListener('click', () => {
-                const matchId = row.dataset.matchId;
-                this.selectMatch(matchId);
-            });
+            row.addEventListener('click', () => { this.selectedMatchId = row.dataset.matchId; this.selectMatch(row.dataset.matchId); });
+            row.ondblclick = () => this.openMatchModal(row.dataset.matchId);
         });
     }
 
     createMatchRow(match) {
-    const time = match.match_datetime 
-        ? new Date(match.match_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : '--:--';
-    
-    const statusClass = [6, 7, 31, 32, 33].includes(match.status) ? 'live' : 
-                       [100, 101, 102].includes(match.status) ? 'finished' : 'scheduled';
-    
-    // ⚡ Odds with fallback
-    const oddsHome = match.odds_home ? Number(match.odds_home).toFixed(2) : '-';
-    const oddsDraw = match.odds_draw ? Number(match.odds_draw).toFixed(2) : '-';
-    const oddsAway = match.odds_away ? Number(match.odds_away).toFixed(2) : '-';
-
-    // ⚡ Winning odds edge
-    let edgeHtml = '-';
-    if (match.home_edge_percentage !== null && match.home_edge_percentage !== undefined) {
-        const homeEdge = parseFloat(match.home_edge_percentage);
-        const awayEdge = parseFloat(match.away_edge_percentage || 0);
-        
-        if (homeEdge > 2) {
-            edgeHtml = `<span class="edge-positive">H+${homeEdge}%</span>`;
-        } else if (awayEdge > 2) {
-            edgeHtml = `<span class="edge-positive">A+${awayEdge}%</span>`;
-        } else if (homeEdge < -5 || awayEdge < -5) {
-            edgeHtml = `<span class="edge-negative">${homeEdge}% / ${awayEdge}%</span>`;
-        } else {
-            edgeHtml = `<span class="edge-neutral">${homeEdge}% / ${awayEdge}%</span>`;
+        const time = match.match_datetime ? new Date(match.match_datetime).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '--:--';
+        const statusClass = [6,7,31,32,33].includes(match.status) ? 'live' : [100,101,102].includes(match.status) ? 'finished' : 'scheduled';
+        const oddsHome = match.odds_home ? Number(match.odds_home).toFixed(2) : '-';
+        const oddsDraw = match.odds_draw ? Number(match.odds_draw).toFixed(2) : '-';
+        const oddsAway = match.odds_away ? Number(match.odds_away).toFixed(2) : '-';
+        let edgeHtml = '-';
+        if (match.home_edge_percentage !== null && match.home_edge_percentage !== undefined) {
+            const hE = parseFloat(match.home_edge_percentage), aE = parseFloat(match.away_edge_percentage||0);
+            if (hE > 2) edgeHtml = `<span class="edge-positive">H+${hE}%</span>`;
+            else if (aE > 2) edgeHtml = `<span class="edge-positive">A+${aE}%</span>`;
+            else edgeHtml = `<span>${hE}%/${aE}%</span>`;
         }
-    }
-
-    // 🆕 Actual winning probabilities (stored as decimal 0-1, convert to percentage)
-    const homeActualProb = match.home_actual_probability !== null && match.home_actual_probability !== undefined
-        ? `${(match.home_actual_probability * 100).toFixed(0)}%` 
-        : '-';
-    const awayActualProb = match.away_actual_probability !== null && match.away_actual_probability !== undefined
-        ? `${(match.away_actual_probability * 100).toFixed(0)}%` 
-        : '-';
-
-    // 🆕 Color coding: orange for value bets, grey for neutral
-    const homeProbClass = match.home_is_value == 1 ? 'probability-value' : 
-                         (match.home_actual_probability ? 'probability-neutral' : '');
-    const awayProbClass = match.away_is_value == 1 ? 'probability-value' : 
-                         (match.away_actual_probability ? 'probability-neutral' : '');
-
-    return `
-        <tr data-match-id="${match.id}" class="${match.id === this.selectedMatchId ? 'selected' : ''}">
+        const hProb = match.home_actual_probability ? `${(match.home_actual_probability*100).toFixed(0)}%` : '-';
+        const aProb = match.away_actual_probability ? `${(match.away_actual_probability*100).toFixed(0)}%` : '-';
+        return `<tr data-match-id="${match.id}" class="${match.id===this.selectedMatchId?'selected':''}">
             <td><span class="tag ${statusClass}">${time}</span></td>
-            <td class="team-cell">${match.home_team || 'Home'}</td>
-            <td class="score-cell">
-                ${match.home_score !== null ? `${match.home_score} - ${match.away_score}` : 'vs'}
-            </td>
-            <td class="team-cell">${match.away_team || 'Away'}</td>
-            <td style="font-size:10px;color:var(--text-tertiary);">${match.tournament || '-'}</td>
-            <td class="odds-cell">${oddsHome}</td>
-            <td class="odds-cell">${oddsDraw}</td>
-            <td class="odds-cell">${oddsAway}</td>
-            <td>${edgeHtml}</td>
-            <td class="prob-cell ${homeProbClass}">${homeActualProb}</td>
-            <td class="prob-cell ${awayProbClass}">${awayActualProb}</td>
-        </tr>
-    `;
-}
-
-    // Select match - load standings + detail
-async selectMatch(matchId) {
-    this.selectedMatchId = matchId;
-    
-    document.querySelectorAll('#matchTableBody tr').forEach(row => {
-        row.classList.toggle('selected', row.dataset.matchId == matchId);
-    });
-
-    // Load standings for this match's tournament
-    const match = this.matches.find(m => m.id == matchId);
-    if (match) {
-        this.loadStandings(match.tournament_id);
+            <td class="team-cell">${match.home_team||'Home'}</td>
+            <td class="score-cell">${match.home_score!==null?`${match.home_score}-${match.away_score}`:'vs'}</td>
+            <td class="team-cell">${match.away_team||'Away'}</td>
+            <td style="font-size:10px;color:var(--text-tertiary);">${match.tournament||'-'}</td>
+            <td class="odds-cell">${oddsHome}</td><td class="odds-cell">${oddsDraw}</td><td class="odds-cell">${oddsAway}</td>
+            <td>${edgeHtml}</td><td>${hProb}</td><td>${aProb}</td></tr>`;
     }
 
-    // Show match detail in modal on double-click
-    document.querySelectorAll('#matchTableBody tr').forEach(row => {
-        row.ondblclick = () => this.openMatchModal(matchId);
-    });
-}
-
-async loadStandings(tournamentId) {
-    const content = document.getElementById('standingsContent');
-    content.innerHTML = '<p class="loading-text">Loading standings...</p>';
-    
-    try {
-        const res = await this.apiClient.get('/analytics/standings', { tournamentId });
-        const standings = res.data || [];
-        
-        if (standings.length === 0) {
-            content.innerHTML = '<p class="text-muted">No standings available</p>';
-            return;
-        }
-
-        content.innerHTML = `
-            <table class="standings-table">
-                <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
-                <tbody>
-                    ${standings.map(s => `
-                        <tr>
-                            <td>${s.position}</td>
-                            <td>${s.team_name}</td>
-                            <td>${s.matches_played}</td>
-                            <td>${s.wins}</td>
-                            <td>${s.draws}</td>
-                            <td>${s.losses}</td>
-                            <td>${s.goal_difference > 0 ? '+' : ''}${s.goal_difference}</td>
-                            <td><strong>${s.points}</strong></td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        `;
-    } catch (e) {
-        content.innerHTML = '<p class="text-muted">Failed to load standings</p>';
+    selectMatch(matchId) {
+        document.querySelectorAll('#matchTableBody tr').forEach(r => r.classList.toggle('selected', r.dataset.matchId == matchId));
+        const match = this.matches.find(m => m.id == matchId);
+        if (match) this.loadStandings(match.tournament_id);
     }
-}
 
-async openMatchModal(matchId) {
+    async loadStandings(tournamentId) {
+        const content = document.getElementById('standingsContent');
+        content.innerHTML = '<p class="loading-text">Loading...</p>';
+        try {
+            const res = await this.apiClient.get('/analytics/standings', { tournamentId });
+            const st = res.data || [];
+            if (!st.length) { content.innerHTML = '<p class="text-muted">No standings</p>'; return; }
+            content.innerHTML = `<table class="standings-table"><thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead><tbody>
+                ${st.map(s => `<tr><td>${s.position}</td><td>${s.team_name}</td><td>${s.matches_played}</td><td>${s.wins}</td><td>${s.draws}</td><td>${s.losses}</td><td>${s.goal_difference>0?'+':''}${s.goal_difference}</td><td><strong>${s.points}</strong></td></tr>`).join('')}
+            </tbody></table>`;
+        } catch(e) { content.innerHTML = '<p class="text-muted">Failed</p>'; }
+    }
+
+    async openMatchModal(matchId) {
     const modal = document.getElementById('matchModal');
     const body = document.getElementById('modalBody');
-    
     modal.style.display = 'flex';
-    body.innerHTML = '<div class="loading-text">Loading analysis...</div>';
+    body.innerHTML = '<div class="loading-text">Loading full analysis...</div>';
 
     try {
+        // Get match details first
         const match = await this.apiClient.getMatchById(matchId);
-        const h2h = await this.apiClient.getH2HComparison(match.home_team_id, match.away_team_id);
         
+       // The match object from getMatchById might have different property names
+        const homeTeamId = match.home_team_id || match.homeTeam?.id || match.home_team;
+        const awayTeamId = match.away_team_id || match.awayTeam?.id || match.away_team;
+
+        const [h2hRes, formHomeRes, formAwayRes, standingsRes] = await Promise.allSettled([
+            this.apiClient.getH2HComparison(homeTeamId, awayTeamId),this.apiClient.get(`/analytics/team/${match.home_team_id}/form`),
+            this.apiClient.get(`/analytics/team/${match.away_team_id}/form`),
+            this.apiClient.get('/analytics/standings', { tournamentId: match.tournament_id })
+        ]);
+
+        const h2h = h2hRes.status === 'fulfilled' ? h2hRes.value : null;
+        const formHome = formHomeRes.status === 'fulfilled' ? formHomeRes.value : null;
+        const formAway = formAwayRes.status === 'fulfilled' ? formAwayRes.value : null;
+        const standings = standingsRes.status === 'fulfilled' ? standingsRes.value : null;
+
         document.getElementById('modalTitle').textContent = 
-            `${match.home_team_name} vs ${match.away_team_name}`;
+            `${match.home_team_name || 'Home'} vs ${match.away_team_name || 'Away'}`;
         
-        body.innerHTML = this.renderMatchAnalysis(match, h2h);
-    } catch (e) {
+        body.innerHTML = this.renderFullMatchAnalysis(match, h2h, formHome, formAway, standings);
+
+        // Setup tab switching
+        body.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                body.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                body.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                const tabId = 'tab-' + btn.dataset.tab;
+                const tabContent = body.querySelector('#' + tabId);
+                if (tabContent) tabContent.classList.add('active');
+            });
+        });
+
+    } catch(e) {
         body.innerHTML = '<p class="loading-text">Failed to load analysis</p>';
     }
 }
 
-renderMatchAnalysis(match, h2h) {
+renderFullMatchAnalysis(match, h2h, formHome, formAway, standings) {
+    const homeForm = formHome?.data?.formString || '-----';
+    const awayForm = formAway?.data?.formString || '-----';
+    const homePPG = formHome?.data?.ppg || '-';
+    const awayPPG = formAway?.data?.ppg || '-';
+    const homeWins = formHome?.data?.wins || 0;
+    const awayWins = formAway?.data?.wins || 0;
+    const homeDraws = formHome?.data?.draws || 0;
+    const awayDraws = formAway?.data?.draws || 0;
+    const homeLosses = formHome?.data?.losses || 0;
+    const awayLosses = formAway?.data?.losses || 0;
+
+    // H2H stats
+    let h2hStats = { team1Wins: 0, draws: 0, team2Wins: 0, matches: [] };
+    if (h2h?.data?.matches) {
+        const h2hMatches = h2h.data.matches;
+        h2hStats.matches = h2hMatches;
+        h2hMatches.forEach(h => {
+            if ((h.home_team_id === match.home_team_id && h.home_score > h.away_score) ||
+                (h.away_team_id === match.home_team_id && h.away_score > h.home_score)) {
+                h2hStats.team1Wins++;
+            } else if (h.home_score === h.away_score) {
+                h2hStats.draws++;
+            } else {
+                h2hStats.team2Wins++;
+            }
+        });
+    }
+    const h2hTotal = h2h.data?.totalMatches || 0;
+
     return `
+    <div class="analysis-tabs">
+        <button class="tab-btn active" data-tab="overview">📊 Overview</button>
+        <button class="tab-btn" data-tab="h2h">⚔️ H2H</button>
+        <button class="tab-btn" data-tab="form">📈 Form</button>
+    </div>
+
+    <!-- OVERVIEW TAB -->
+    <div class="tab-content active" id="tab-overview">
         <div class="analysis-grid">
             <div class="analysis-section">
                 <h4>📊 Match Info</h4>
-                <p>🏆 ${match.tournament_name || 'N/A'}</p>
-                <p>📅 ${match.match_date}</p>
-                <p>🏟️ ${match.venue_name || 'TBD'}</p>
-                <p>Status: ${match.status_description || match.status}</p>
+                <div style="font-size:10px;display:grid;grid-template-columns:1fr 1fr;gap:4px;">
+                    <div>🏆 ${match.tournament_name || 'N/A'}</div>
+                    <div>📅 ${match.match_date || 'N/A'}</div>
+                    <div>🏟️ ${match.venue_name || 'TBD'}</div>
+                    <div>👨‍⚖️ ${match.referee_name || 'TBD'}</div>
+                </div>
                 ${match.home_score !== null ? 
-                    `<p style="font-size:24px;text-align:center;margin:12px 0;">
-                        ${match.home_score} - ${match.away_score}
-                    </p>` : ''}
+                    `<div style="text-align:center;margin:12px 0;">
+                        <span style="font-size:28px;font-weight:700;">${match.home_score} - ${match.away_score}</span>
+                        <div style="font-size:10px;color:var(--text-tertiary);">${match.status_description || 'Final'}</div>
+                    </div>` : ''}
             </div>
-            
+
             <div class="analysis-section">
                 <h4>🎲 Match Odds</h4>
-                ${match.odds && match.odds.length > 0 ? 
-                    match.odds.filter(o => o.market_group === '1X2').map(o => `
-                        <div style="display:flex;justify-content:space-between;padding:3px 0;">
-                            <span>${o.selection_name}</span>
-                            <span style="font-weight:600;">${o.decimal_odds}</span>
-                        </div>
-                    `).join('') : '<p class="text-muted">No odds available</p>'}
+                ${match.odds?.length ? match.odds.filter(o => o.market_group === '1X2' || o.selection_name === '1' || o.selection_name === 'X' || o.selection_name === '2').slice(0, 3).map(o => `
+                    <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;">
+                        <span>${o.selection_name === '1' ? match.home_team_name : o.selection_name === '2' ? match.away_team_name : 'Draw'}</span>
+                        <span class="odds-cell" style="font-weight:600;">${o.decimal_odds || o.home_value || o.away_value || '-'}</span>
+                    </div>
+                `).join('') : '<p class="text-muted">No odds available</p>'}
             </div>
-            
+
             <div class="analysis-section">
-                <h4>⚔️ H2H Record</h4>
-                ${h2h && h2h.matches ? `
-                    <p>Last ${h2h.matches.length} meetings:</p>
-                    ${h2h.matches.slice(0, 5).map(h => `
-                        <div style="font-size:10px;padding:2px 0;">
-                            ${h.match_date}: ${h.home_score}-${h.away_score}
-                        </div>
-                    `).join('')}
-                ` : '<p class="text-muted">No H2H data</p>'}
+                <h4>📈 Recent Form</h4>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <span style="font-size:10px;">${match.home_team_name}</span>
+                    <span style="font-family:monospace;font-size:12px;letter-spacing:2px;">${this.formatFormString(homeForm)}</span>
+                    <span style="font-size:10px;color:var(--accent-primary);">PPG: ${homePPG}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="font-size:10px;">${match.away_team_name}</span>
+                    <span style="font-family:monospace;font-size:12px;letter-spacing:2px;">${this.formatFormString(awayForm)}</span>
+                    <span style="font-size:10px;color:var(--accent-primary);">PPG: ${awayPPG}</span>
+                </div>
+            </div>
+
+            <div class="analysis-section">
+                <h4>🏆 Standings</h4>
+                ${standings?.data?.length ? `
+                    <table class="standings-table">
+                        <thead><tr><th>#</th><th>Team</th><th>Pts</th></tr></thead>
+                        <tbody>${standings.data.slice(0, 6).map(s => `
+                            <tr>
+                                <td>${s.position}</td><td>${s.team_name}</td><td><strong>${s.points}</strong></td>
+                            </tr>`).join('')}</tbody>
+                    </table>
+                ` : '<p class="text-muted">No standings</p>'}
             </div>
         </div>
-    `;
-}
+    </div>
 
-closeModal() {
-    document.getElementById('matchModal').style.display = 'none';
-}
-
-    renderMatchDetail(match) {
-        if (!match) return '<p>Match not found</p>';
-        
-        let oddsHtml = '';
-        if (match.odds && match.odds.length > 0) {
-            oddsHtml = `
-                <div style="margin-top:8px;">
-                    <h5 style="font-size:10px;color:var(--text-tertiary);margin:0 0 4px 0;">🎲 ODDS</h5>
-                    ${match.odds.filter(o => o.market_group === '1X2').map(o => `
-                        <div style="display:flex;justify-content:space-between;font-size:10px;padding:2px 0;">
-                            <span>${o.selection_name}</span>
-                            <span style="font-weight:600;">${o.decimal_odds}</span>
-                        </div>
-                    `).join('')}
+    <!-- H2H TAB -->
+    <div class="tab-content" id="tab-h2h">
+        <div class="analysis-section">
+            <h4>⚔️ Head-to-Head History</h4>
+            ${h2hTotal > 0 ? `
+                <div style="display:flex;justify-content:space-around;text-align:center;margin:12px 0;">
+                    <div><span style="font-size:20px;font-weight:700;">${h2hStats.team1Wins}</span><br><span style="font-size:9px;">${match.home_team_name}</span></div>
+                    <div><span style="font-size:20px;font-weight:700;">${h2hStats.draws}</span><br><span style="font-size:9px;">Draws</span></div>
+                    <div><span style="font-size:20px;font-weight:700;">${h2hStats.team2Wins}</span><br><span style="font-size:9px;">${match.away_team_name}</span></div>
                 </div>
-            `;
-        }
-        
-        return `
-            <div style="padding:8px;">
-                <h4 style="margin:0 0 4px 0;font-size:12px;">${match.home_team_name} vs ${match.away_team_name}</h4>
-                <div style="font-size:10px;color:var(--text-tertiary);margin-bottom:6px;">
-                    ${match.tournament_name || ''} · ${match.match_date || ''}
-                </div>
-                ${[100, 101, 102].includes(match.status) ? `
-                    <div style="font-size:20px;font-weight:700;text-align:center;margin:6px 0;">
-                        ${match.home_score} - ${match.away_score}
+                <div style="max-height:200px;overflow-y:auto;">
+                ${h2hStats.matches.slice(0, 10).map(h => `
+                    <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border-primary);font-size:10px;">
+                        <span>${h.match_date || ''}</span>
+                        <span>${h.home_score} - ${h.away_score}</span>
+                        <span style="color:var(--text-tertiary);">${h.tournament_name || ''}</span>
                     </div>
-                ` : ''}
-                <div style="font-size:10px;color:var(--text-tertiary);">
-                    Status: ${match.status_description || match.status || 'Unknown'}
+                `).join('')}
                 </div>
-                ${oddsHtml}
+            ` : '<p class="text-muted">No H2H data available</p>'}
+        </div>
+    </div>
+
+    <!-- FORM TAB -->
+    <div class="tab-content" id="tab-form">
+        <div class="analysis-grid">
+            <div class="analysis-section">
+                <h4>${match.home_team_name}</h4>
+                <div style="font-family:monospace;font-size:20px;letter-spacing:4px;text-align:center;margin:10px 0;">
+                    ${this.formatFormString(homeForm)}
+                </div>
+                <div style="text-align:center;font-size:10px;color:var(--text-tertiary);">
+                    ${homeWins}W ${homeDraws}D ${homeLosses}L | PPG: ${homePPG}
+                </div>
             </div>
-        `;
+            <div class="analysis-section">
+                <h4>${match.away_team_name}</h4>
+                <div style="font-family:monospace;font-size:20px;letter-spacing:4px;text-align:center;margin:10px 0;">
+                    ${this.formatFormString(awayForm)}
+                </div>
+                <div style="text-align:center;font-size:10px;color:var(--text-tertiary);">
+                    ${awayWins}W ${awayDraws}D ${awayLosses}L | PPG: ${awayPPG}
+                </div>
+            </div>
+        </div>
+    </div>`;
+}
+
+formatFormString(form) {
+    if (!form) return '-----';
+    return form.split('').map(c => {
+        if (c === 'W') return '<span style="color:var(--accent-success);">W</span>';
+        if (c === 'L') return '<span style="color:var(--accent-danger);">L</span>';
+        return '<span style="color:var(--text-tertiary);">D</span>';
+    }).join('');
+}
+
+    getIncidentIcon(type) {
+        const icons = { 'goal': '⚽', 'card': '🟨', 'substitution': '🔄', 'period': '⏱️', 'var': '📺', 'injuryTime': '⏰' };
+        return icons[type] || '●';
     }
 
-    filterMatches(searchTerm) {
-        const statusFilter = document.querySelector('input[name="status"]:checked')?.value || 'all';
-        const tournamentFilter = document.querySelector('input[name="tournament"]:checked')?.value || 'all';
-        
+    closeModal() { document.getElementById('matchModal').style.display = 'none'; }
+
+    getSearchTerm() { return document.getElementById('searchInput').value; }
+
+    filterMatches(term) {
         let filtered = this.matches;
-        
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase();
-            filtered = filtered.filter(m => 
-                (m.home_team || '').toLowerCase().includes(term) ||
-                (m.away_team || '').toLowerCase().includes(term)
-            );
-        }
-        
-        if (tournamentFilter !== 'all') {
-            filtered = filtered.filter(m => m.tournament === tournamentFilter);
-        }
-        
-        if (statusFilter !== 'all') {
-            if (statusFilter === 'live') {
-                filtered = filtered.filter(m => [6, 7, 31, 32, 33].includes(m.status));
-            } else if (statusFilter === 'finished') {
-                filtered = filtered.filter(m => [100, 101, 102].includes(m.status));
-            } else if (statusFilter === 'scheduled') {
-                filtered = filtered.filter(m => ![6, 7, 31, 32, 33, 100, 101, 102].includes(m.status));
-            }
-        }
-        
+        if (term) { const t = term.toLowerCase(); filtered = filtered.filter(m => (m.home_team||'').toLowerCase().includes(t) || (m.away_team||'').toLowerCase().includes(t)); }
+        const tf = document.querySelector('input[name="tournament"]:checked')?.value;
+        if (tf && tf !== 'all') filtered = filtered.filter(m => m.tournament === tf);
         document.getElementById('matchCount').textContent = `${filtered.length} matches`;
         this.renderMatches(filtered);
     }
 
-    // New method for status filter
-    filterByStatus(statusFilter) {
+    filterByStatus(sf) {
         let filtered = this.matches;
-        
-        if (statusFilter === 'live') {
-            filtered = filtered.filter(m => [6, 7, 31, 32, 33].includes(m.status));
-        } else if (statusFilter === 'finished') {
-            filtered = filtered.filter(m => [100, 101, 102].includes(m.status));
-        } else if (statusFilter === 'scheduled') {
-            filtered = filtered.filter(m => ![6, 7, 31, 32, 33, 100, 101, 102].includes(m.status));
-        }
-        // 'all' = no filter
-        
+        if (sf === 'live') filtered = filtered.filter(m => [6,7,31,32,33].includes(m.status));
+        else if (sf === 'finished') filtered = filtered.filter(m => [100,101,102].includes(m.status));
+        else if (sf === 'scheduled') filtered = filtered.filter(m => ![6,7,31,32,33,100,101,102].includes(m.status));
         document.getElementById('matchCount').textContent = `${filtered.length} matches`;
         this.renderMatches(filtered);
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    window.app = new App();
-});
-
+document.addEventListener('DOMContentLoaded', () => { window.app = new App(); });
 export default App;
