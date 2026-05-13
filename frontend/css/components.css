@@ -510,3 +510,31 @@
     color: #1a1a1a !important;
     border-color: var(--accent-primary) !important;
 }
+
+ 
+.match-table tbody tr:hover {
+    background-color: var(--bg-hover, rgba(255, 255, 255, 0.05));
+    transition: background-color 0.2s;
+}
+
+.value-bet-mini:hover {
+    background-color: var(--bg-hover, rgba(255, 255, 255, 0.05));
+    transform: translateX(2px);
+}
+
+.modal-content {
+    max-width: 800px;
+    width: 90%;
+    max-height: 85vh;
+    overflow-y: auto;
+}
+
+.tab-content {
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+*/

@@ -9,6 +9,8 @@ router.get('/h2h', ctrl.getH2HComparison);
 router.get('/value-bets', ctrl.getValueBets);     // ← Make sure this exists
 router.get('/standings', ctrl.getStandings);         // ← Make sure this exists
 router.get('/summary', ctrl.getDashboardSummary);
+router.get('/match/:matchId/strength', ctrl.getTeamStrengthAnalysis);
+
 
 module.exports = router;
 

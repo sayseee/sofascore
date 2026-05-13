@@ -283,6 +283,82 @@ class LineupsCollector {
         }
     }
 
+    /**
+ * Collect player stats for a single player (fire & forget)
+ * This runs silently in the background while lineups are collected
+ */
+async collectPlayerStatsAsync(player, dbPlayerId) {
+    if (!player?.id || !dbPlayerId) return;
+    
+    try {
+        // Check if stats already exist
+        const existing = await db.query(
+            'SELECT COUNT(*) as c FROM player_statistics WHERE player_id = ?',
+            [dbPlayerId]
+        );
+        if (existing[0]?.c > 0) return;
+
+        const endpoint = `/player/${player.id}/statistics`;
+        const response = await httpClient.get(endpoint);
+        
+        if (!response || !response.seasons) return;
+
+        for (const seasonData of response.seasons) {
+            if (!seasonData.statistics) continue;
+
+            const stats = seasonData.statistics;
+            
+            try {
+                await db.query(
+                    `INSERT INTO player_statistics (
+                        player_id, year, appearances, minutes_played, rating,
+                        goals, assists, goals_assists_sum, expected_goals, expected_assists,
+                        total_shots, shots_on_target,
+                        key_passes, total_passes, accurate_passes,
+                        tackles, interceptions, yellow_cards, red_cards,
+                        saves, goals_conceded, clean_sheet, stat_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                        rating = VALUES(rating), goals = VALUES(goals), assists = VALUES(assists),
+                        appearances = VALUES(appearances), minutes_played = VALUES(minutes_played),
+                        updated_at = NOW()`,
+                    [
+                        dbPlayerId,
+                        seasonData.year || null,
+                        stats.appearances || 0,
+                        stats.minutesPlayed || 0,
+                        stats.rating || null,
+                        stats.goals || 0,
+                        stats.assists || 0,
+                        stats.goalsAssistsSum || 0,
+                        stats.expectedGoals || null,
+                        stats.expectedAssists || null,
+                        stats.totalShots || 0,
+                        stats.shotsOnTarget || 0,
+                        stats.keyPasses || 0,
+                        stats.totalPasses || 0,
+                        stats.accuratePasses || 0,
+                        stats.tackles || 0,
+                        stats.interceptions || 0,
+                        stats.yellowCards || 0,
+                        stats.redCards || 0,
+                        stats.saves || 0,
+                        stats.goalsConceded || 0,
+                        stats.cleanSheet || 0,
+                        stats.type || 'overall'
+                    ]
+                );
+            } catch (e) {
+                if (e.code !== 'ER_DUP_ENTRY') {
+                    // Silently fail - don't slow down lineup collection
+                }
+            }
+        }
+    } catch (error) {
+        // Silently fail
+    }
+}
+
     async collectForDate(date, limit = 30) {
         await this.initialize();
         const max = parseInt(limit) || 30;

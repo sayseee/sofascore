@@ -352,35 +352,44 @@ class App {
         } catch(e) { content.innerHTML = '<p class="text-muted">Failed</p>'; }
     }
 
-    async openMatchModal(matchId) {
+    // Update the openMatchModal method - the strength parameter is already being passed correctly
+async openMatchModal(matchId) {
     const modal = document.getElementById('matchModal');
     const body = document.getElementById('modalBody');
     modal.style.display = 'flex';
     body.innerHTML = '<div class="loading-text">Loading full analysis...</div>';
 
     try {
-        // Get match details first
         const match = await this.apiClient.getMatchById(matchId);
         
-       // The match object from getMatchById might have different property names
         const homeTeamId = match.home_team_id || match.homeTeam?.id || match.home_team;
         const awayTeamId = match.away_team_id || match.awayTeam?.id || match.away_team;
-
-        const [h2hRes, formHomeRes, formAwayRes, standingsRes] = await Promise.allSettled([
-            this.apiClient.getH2HComparison(homeTeamId, awayTeamId),this.apiClient.get(`/analytics/team/${match.home_team_id}/form`),
+        
+        // ⚡ Load all data in parallel
+        const [h2hRes, formHomeRes, formAwayRes, standingsRes, strengthRes] = await Promise.allSettled([
+            this.apiClient.getH2HComparison(homeTeamId, awayTeamId),
+            this.apiClient.get(`/analytics/team/${match.home_team_id}/form`),
             this.apiClient.get(`/analytics/team/${match.away_team_id}/form`),
-            this.apiClient.get('/analytics/standings', { tournamentId: match.tournament_id })
+            this.apiClient.get('/analytics/standings', { tournamentId: match.tournament_id }),
+            this.apiClient.get(`/analytics/match/${matchId}/strength`)  // This is correct
         ]);
 
         const h2h = h2hRes.status === 'fulfilled' ? h2hRes.value : null;
         const formHome = formHomeRes.status === 'fulfilled' ? formHomeRes.value : null;
         const formAway = formAwayRes.status === 'fulfilled' ? formAwayRes.value : null;
         const standings = standingsRes.status === 'fulfilled' ? standingsRes.value : null;
+        
+        // ⚡ FIX: Extract the strength data correctly
+        let strength = null;
+        if (strengthRes.status === 'fulfilled' && strengthRes.value) {
+            strength = strengthRes.value.data || strengthRes.value;
+        }
 
         document.getElementById('modalTitle').textContent = 
             `${match.home_team_name || 'Home'} vs ${match.away_team_name || 'Away'}`;
         
-        body.innerHTML = this.renderFullMatchAnalysis(match, h2h, formHome, formAway, standings);
+        // ⚡ PASS strength to the render function (6 parameters)
+        body.innerHTML = this.renderFullMatchAnalysis(match, h2h, formHome, formAway, standings, strength);
 
         // Setup tab switching
         body.querySelectorAll('.tab-btn').forEach(btn => {
@@ -395,26 +404,29 @@ class App {
         });
 
     } catch(e) {
+        console.error('Modal error:', e);
         body.innerHTML = '<p class="loading-text">Failed to load analysis</p>';
     }
 }
 
-renderFullMatchAnalysis(match, h2h, formHome, formAway, standings) {
-    const homeForm = formHome?.data?.formString || '-----';
-    const awayForm = formAway?.data?.formString || '-----';
-    const homePPG = formHome?.data?.ppg || '-';
-    const awayPPG = formAway?.data?.ppg || '-';
-    const homeWins = formHome?.data?.wins || 0;
-    const awayWins = formAway?.data?.wins || 0;
-    const homeDraws = formHome?.data?.draws || 0;
-    const awayDraws = formAway?.data?.draws || 0;
-    const homeLosses = formHome?.data?.losses || 0;
-    const awayLosses = formAway?.data?.losses || 0;
+// UPDATE the renderFullMatchAnalysis to accept 6 parameters (add strength)
+renderFullMatchAnalysis(match, h2h, formHome, formAway, standings, strength) {
+    const homeForm = formHome?.data?.formString || formHome?.formString || '-----';
+    const awayForm = formAway?.data?.formString || formAway?.formString || '-----';
+    const homePPG = formHome?.data?.ppg || formHome?.ppg || '-';
+    const awayPPG = formAway?.data?.ppg || formAway?.ppg || '-';
+    const homeWins = formHome?.data?.wins || formHome?.wins || 0;
+    const awayWins = formAway?.data?.wins || formAway?.wins || 0;
+    const homeDraws = formHome?.data?.draws || formHome?.draws || 0;
+    const awayDraws = formAway?.data?.draws || formAway?.draws || 0;
+    const homeLosses = formHome?.data?.losses || formHome?.losses || 0;
+    const awayLosses = formAway?.data?.losses || formAway?.losses || 0;
 
     // H2H stats
     let h2hStats = { team1Wins: 0, draws: 0, team2Wins: 0, matches: [] };
-    if (h2h?.data?.matches) {
-        const h2hMatches = h2h.data.matches;
+    const h2hData = h2h?.data || h2h;
+    if (h2hData?.matches) {
+        const h2hMatches = h2hData.matches;
         h2hStats.matches = h2hMatches;
         h2hMatches.forEach(h => {
             if ((h.home_team_id === match.home_team_id && h.home_score > h.away_score) ||
@@ -427,13 +439,14 @@ renderFullMatchAnalysis(match, h2h, formHome, formAway, standings) {
             }
         });
     }
-    const h2hTotal = h2h.data?.totalMatches || 0;
+    const h2hTotal = h2hData?.totalMatches || 0;
 
     return `
     <div class="analysis-tabs">
         <button class="tab-btn active" data-tab="overview">📊 Overview</button>
         <button class="tab-btn" data-tab="h2h">⚔️ H2H</button>
         <button class="tab-btn" data-tab="form">📈 Form</button>
+        <button class="tab-btn" data-tab="strength">💪 Strength</button>
     </div>
 
     <!-- OVERVIEW TAB -->
@@ -491,6 +504,51 @@ renderFullMatchAnalysis(match, h2h, formHome, formAway, standings) {
                 ` : '<p class="text-muted">No standings</p>'}
             </div>
         </div>
+    </div>
+
+    <!-- STRENGTH TAB -->
+    <div class="tab-content" id="tab-strength">
+        ${strength?.home ? `
+            <div class="analysis-section">
+                <h4>${strength.home.team} Strength: ${strength.home.totalStrength}</h4>
+                <p>Starting XI Avg Rating: ${strength.home.startingXIStrength || 'N/A'}</p>
+                <p>Key Players: ${strength.home.keyPlayers?.map(p => p.name).join(', ') || 'None listed'}</p>
+                ${strength.home.missingPlayers?.length > 0 ? 
+                    `<p style="color:var(--accent-danger);">⚠️ Missing: ${strength.home.missingPlayers.map(m => m.player_name || m.name).join(', ')}</p>` : 
+                    '<p>✅ Full squad available</p>'}
+                ${strength.home.formation ? `<p>Formation: ${strength.home.formation}</p>` : ''}
+            </div>
+            <div class="analysis-section">
+                <h4>${strength.away.team} Strength: ${strength.away.totalStrength}</h4>
+                <p>Starting XI Avg Rating: ${strength.away.startingXIStrength || 'N/A'}</p>
+                <p>Key Players: ${strength.away.keyPlayers?.map(p => p.name).join(', ') || 'None listed'}</p>
+                ${strength.away.missingPlayers?.length > 0 ? 
+                    `<p style="color:var(--accent-danger);">⚠️ Missing: ${strength.away.missingPlayers.map(m => m.player_name || m.name).join(', ')}</p>` : 
+                    '<p>✅ Full squad available</p>'}
+                ${strength.away.formation ? `<p>Formation: ${strength.away.formation}</p>` : ''}
+            </div>
+            ${strength?.analysis ? `
+                <div class="analysis-section">
+                    <h4>📊 Analysis</h4>
+                    <p>Strength Difference: ${strength.analysis.strengthDifference || '0'}</p>
+                    <p>Home Advantage: ${strength.analysis.homeAdvantage || 'Even'}</p>
+                    <p>Adjusted Home Probability: ${strength.analysis.adjustedHomeProbability || 'N/A'}</p>
+                    <p>Confidence: ${strength.analysis.confidence || 'low'}</p>
+                </div>
+                ` : `
+                <div class="analysis-section">
+                    <p class="text-muted">No analysis available. Lineup data required for strength calculation.</p>
+                </div>
+                `}
+        ` : strength?.message ? `
+            <div class="analysis-section">
+                <p class="text-muted">${strength.message}</p>
+            </div>
+        ` : `
+            <div class="analysis-section">
+                <p class="text-muted">No strength data available. Lineups may not be available for this match.</p>
+            </div>
+        `}
     </div>
 
     <!-- H2H TAB -->

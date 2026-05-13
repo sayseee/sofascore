@@ -23,16 +23,17 @@ export default class AIAssistant {
                 </div>
                 <div id="aiBody" style="display:none;height:450px;flex-direction:column;">
                     <div style="padding:8px 12px;border-bottom:1px solid var(--border-primary);display:flex;flex-wrap:wrap;gap:4px;">
-                        <button class="ai-preset" data-prompt="Show matches with home expected > 50% and positive edge">🏠 Home Edge >50%</button>
-                        <button class="ai-preset" data-prompt="Find value bets with high confidence">💎 High Value Bets</button>
-                        <button class="ai-preset" data-prompt="Show matches with edge above 15%">🔥 Edge >15%</button>
+                        <button class="ai-preset" data-prompt="Show matches with home expected > 50% and positive edge">🏠 Home Edge</button>
+                        <button class="ai-preset" data-prompt="Find value bets with high confidence">💎 Value Bets</button>
+                        <button class="ai-preset" data-prompt="Show teams with high win probability >70%">⭐ High Win %</button>
+                        <button class="ai-preset" data-prompt="Find underdog value bets">🦁 Underdog Value</button>
                         <button class="ai-preset" data-prompt="Show standings for Premier League">🏆 PL Standings</button>
                         <button class="ai-preset" data-prompt="Which teams have the best form recently?">📈 Top Form</button>
-                        <button class="ai-preset" data-prompt="Show away teams with positive edge">🛫 Away Value</button>
+                        <button class="ai-preset" data-prompt="Team Charlotte FC expected win probability">🔍 Search Team</button>
                     </div>
                     <div id="aiMessages" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;font-size:12px;">
                         <div style="background:var(--bg-tertiary);padding:10px 12px;border-radius:10px;max-width:90%;line-height:1.4;">
-                            👋 Hello! I'm your AI football analyst. I can query the database for winning odds, value bets, team form, H2H, and league standings.<br><br>Click a preset button or type your question!
+                            👋 Hello! I'm your AI football analyst. I query the database for the <strong>current date</strong> you're viewing.<br><br>Click a preset or type your question!
                         </div>
                     </div>
                     <div style="display:flex;gap:6px;padding:10px 12px;border-top:1px solid var(--border-primary);">
@@ -99,14 +100,26 @@ export default class AIAssistant {
         messages.scrollTop = messages.scrollHeight;
 
         try {
-            const res = await this.apiClient.post('/ai/ask', { question: text });
+            // ⚡ Get the current date from the main app
+            const currentDate = (window.app && window.app.currentDate) || new Date().toISOString().split('T')[0];
+            
+            // Send question WITH the date
+            const res = await this.apiClient.post('/ai/ask', { 
+                question: text,
+                date: currentDate
+            });
+            
             const data = res.data || res;
             const typingEl = document.getElementById(`typing-${typingId}`);
             if (typingEl) typingEl.remove();
 
+            // Show date in response
+            const dateLabel = data.date || currentDate;
+            
             messages.innerHTML += `
                 <div style="background:var(--bg-tertiary);padding:10px 12px;border-radius:10px;
                             max-width:90%;line-height:1.5;font-size:12px;">
+                    <div style="font-size:9px;color:var(--text-tertiary);margin-bottom:4px;">📅 Results for: ${dateLabel}</div>
                     <div style="white-space:pre-line;">${data.response || 'No results found.'}</div>
                 </div>`;
         } catch (error) {

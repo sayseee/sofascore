@@ -2,234 +2,246 @@ const db = require('../config/database');
 
 class AIController {
     async askQuestion(req, res, next) {
-    try {
-        const { question } = req.body;
-        if (!question) {
-            return res.status(400).json({ success: false, error: 'Question is required' });
-        }
-
-        const q = question.toLowerCase();
-        let data = [];
-        let responseText = '';
-
-        // Home Expected > 50% + Positive Edge
-        if (q.includes('home expected') || q.includes('positive edge')) {
-            data = await db.query(`
-                SELECT ht.name AS home_team, at.name AS away_team,
-                       t.name AS tournament, m.match_date,
-                       wo.home_expected_percentage, wo.home_actual_percentage,
-                       wo.home_edge_percentage, wo.home_edge_type,
-                       wo.away_expected_percentage, wo.away_actual_percentage,
-                       wo.away_edge_percentage, wo.away_edge_type,
-                       wo.home_decimal_odds, wo.away_decimal_odds,
-                       wo.market_efficiency_gap
-                FROM winning_odds wo
-                JOIN matches m ON wo.match_id = m.id
-                JOIN teams ht ON m.home_team_id = ht.id
-                JOIN teams at ON m.away_team_id = at.id
-                JOIN tournaments t ON m.tournament_id = t.id
-                WHERE wo.home_expected_percentage > 50 AND wo.home_edge_percentage > 0
-                ORDER BY wo.home_edge_percentage DESC LIMIT 10
-            `);
+        try {
+            const { question, date } = req.body;
+            console.log(`[AI] Question: "${question}" | Date: ${date || 'today'}`);
             
-            if (data.length > 0) {
-                responseText = `📊 **${data.length} matches with home expected >50% + positive edge:**\n\n`;
-                data.forEach((m, i) => {
-                    responseText += `${i+1}. **${m.home_team} vs ${m.away_team}**\n`;
-                    responseText += `   🏠 HOME: Expected ${m.home_expected_percentage}% → Actual ${m.home_actual_percentage}% `;
-                    responseText += `(${m.home_edge_percentage > 0 ? '+' : ''}${m.home_edge_percentage}% edge) ${m.home_edge_type === 'positive' ? '🟡' : '⚫'}\n`;
-                    responseText += `   🛫 AWAY: Expected ${m.away_expected_percentage}% → Actual ${m.away_actual_percentage}% `;
-                    responseText += `(${m.away_edge_percentage > 0 ? '+' : ''}${m.away_edge_percentage}% edge) ${m.away_edge_type === 'positive' ? '🟡' : '⚫'}\n`;
-                    responseText += `   🎲 Odds: H ${m.home_decimal_odds} | A ${m.away_decimal_odds} | Draw implied: ${m.market_efficiency_gap ? (m.market_efficiency_gap*100).toFixed(0) : '?'}%\n`;
-                    responseText += `   🏆 ${m.tournament} | 📅 ${m.match_date}\n\n`;
-                });
-            } else {
-                responseText = 'No matches found with home expected >50% and positive edge.';
+            if (!question) {
+                return res.status(400).json({ success: false, error: 'Question is required' });
             }
-        }
 
-        // Value Bets
-        else if (q.includes('value bet') || q.includes('high confidence')) {
-            data = await db.query(`
-                SELECT be.*, ht.name AS home_team_name, at.name AS away_team_name,
-                       t.name AS tournament_name, m.match_date,
-                       wo.home_expected_percentage, wo.home_actual_percentage,
-                       wo.home_edge_percentage, wo.away_expected_percentage,
-                       wo.away_actual_percentage, wo.away_edge_percentage
-                FROM betting_edges be
-                JOIN matches m ON be.match_id = m.id
-                JOIN teams ht ON m.home_team_id = ht.id
-                JOIN teams at ON m.away_team_id = at.id
-                JOIN tournaments t ON m.tournament_id = t.id
-                LEFT JOIN winning_odds wo ON m.id = wo.match_id
-                WHERE be.is_value_bet = 1
-                ORDER BY be.expected_value DESC LIMIT 10
-            `);
+            // ⚡ Dynamic date filter for ALL queries
+            const dateFilter = date ? 'AND m.match_date = ?' : 'AND m.match_date >= CURDATE()';
+            const dateParam = date ? [date] : [];
             
-            if (data.length > 0) {
-                responseText = `💎 **${data.length} Value Bets Found:**\n\n`;
-                data.forEach((b, i) => {
-                    responseText += `${i+1}. **${b.home_team_name} vs ${b.away_team_name}**\n`;
-                    responseText += `   Pick: ${b.selection.toUpperCase()} @ ${b.bookmaker_odds}\n`;
-                    responseText += `   Edge: +${b.edge_percentage}% | EV: ${b.expected_value > 0 ? '+' : ''}${(b.expected_value*100).toFixed(1)}%\n`;
-                    responseText += `   Confidence: ${(b.confidence_level || 'low').toUpperCase()}\n`;
-                    if (b.home_edge_percentage !== null) {
-                        responseText += `   🏠 H: ${b.home_expected_percentage}%→${b.home_actual_percentage}% (${b.home_edge_percentage > 0 ? '+' : ''}${b.home_edge_percentage}%)\n`;
-                        responseText += `   🛫 A: ${b.away_expected_percentage}%→${b.away_actual_percentage}% (${b.away_edge_percentage > 0 ? '+' : ''}${b.away_edge_percentage}%)\n`;
-                    }
-                    responseText += `   🏆 ${b.tournament_name} | 📅 ${b.match_date}\n\n`;
-                });
-            } else {
-                responseText = 'No value bets found. Run: node jobs/populateBettingEdges.js';
-            }
-        }
+            const q = question.toLowerCase();
+            let data = [];
+            let responseText = '';
 
-        // Edge > 15%
-        else if (q.includes('edge') && q.includes('15')) {
-            data = await db.query(`
-                SELECT ht.name AS home_team, at.name AS away_team,
-                       t.name AS tournament, m.match_date,
-                       wo.home_expected_percentage, wo.home_actual_percentage,
-                       wo.home_edge_percentage, wo.home_edge_type,
-                       wo.away_expected_percentage, wo.away_actual_percentage,
-                       wo.away_edge_percentage, wo.away_edge_type,
-                       wo.home_decimal_odds, wo.away_decimal_odds
-                FROM winning_odds wo
-                JOIN matches m ON wo.match_id = m.id
-                JOIN teams ht ON m.home_team_id = ht.id
-                JOIN teams at ON m.away_team_id = at.id
-                JOIN tournaments t ON m.tournament_id = t.id
-                WHERE wo.home_edge_percentage > 15 OR wo.away_edge_percentage > 15
-                ORDER BY GREATEST(wo.home_edge_percentage, wo.away_edge_percentage) DESC LIMIT 10
-            `);
-            
-            if (data.length > 0) {
-                responseText = `🔥 **${data.length} matches with edge >15%:**\n\n`;
-                data.forEach((m, i) => {
-                    responseText += `${i+1}. **${m.home_team} vs ${m.away_team}**\n`;
-                    responseText += `   🏠 HOME: ${m.home_expected_percentage}%→${m.home_actual_percentage}% `;
-                    responseText += `(${m.home_edge_percentage > 0 ? '+' : ''}${m.home_edge_percentage}%) ${m.home_edge_type === 'positive' ? '🟡' : '⚫'}\n`;
-                    responseText += `   🛫 AWAY: ${m.away_expected_percentage}%→${m.away_actual_percentage}% `;
-                    responseText += `(${m.away_edge_percentage > 0 ? '+' : ''}${m.away_edge_percentage}%) ${m.away_edge_type === 'positive' ? '🟡' : '⚫'}\n`;
-                    responseText += `   🎲 Odds: H ${m.home_decimal_odds} | A ${m.away_decimal_odds}\n`;
-                    responseText += `   🏆 ${m.tournament} | 📅 ${m.match_date}\n\n`;
-                });
-            } else {
-                responseText = 'No matches found with edge above 15%.';
+            // HIGH EXPECTED WIN PROBABILITY (>70%)
+            if (q.includes('high expected') || q.includes('high win probability') || q.includes('favorite')) {
+                data = await db.query(`
+                    SELECT ht.name AS home_team, at.name AS away_team, t.name AS tournament,
+                           m.match_date, wo.home_expected_probability, wo.home_actual_probability,
+                           wo.home_edge_percentage, wo.home_edge_type,
+                           wo.away_expected_probability, wo.away_actual_probability,
+                           wo.home_expected_decimal, wo.away_expected_decimal
+                    FROM matches m
+                    JOIN teams ht ON m.home_team_id = ht.id
+                    JOIN teams at ON m.away_team_id = at.id
+                    JOIN tournaments t ON m.tournament_id = t.id
+                    LEFT JOIN winning_odds wo ON m.id = wo.match_id
+                    WHERE (wo.home_expected_probability > 0.70 OR wo.away_expected_probability > 0.70)
+                        AND wo.home_expected_probability IS NOT NULL
+                        ${dateFilter}
+                    ORDER BY GREATEST(wo.home_expected_probability, wo.away_expected_probability) DESC LIMIT 10
+                `, dateParam);
+                
+                responseText = data.length > 0 
+                    ? `⭐ **${data.length} matches with high win probability (>70%):**\n\n` +
+                      data.map((m, i) => {
+                          const isHome = m.home_expected_probability > 0.70;
+                          const fav = isHome ? m.home_team : m.away_team;
+                          const expPct = ((isHome ? m.home_expected_probability : m.away_expected_probability) * 100).toFixed(1);
+                          const actPct = ((isHome ? m.home_actual_probability : m.away_actual_probability) * 100).toFixed(1);
+                          const odds = isHome ? m.home_expected_decimal : m.away_expected_decimal;
+                          const edge = isHome ? m.home_edge_percentage : m.away_edge_percentage;
+                          return `${i+1}. **${m.home_team} vs ${m.away_team}**\n   ⭐ ${fav}: ${expPct}% expected, ${actPct}% actual (${edge > 0 ? '+' : ''}${edge}%)\n   🎲 ${odds} | 🏆 ${m.tournament} | 📅 ${m.match_date}\n`;
+                      }).join('\n')
+                    : 'No matches found with >70% win probability.';
             }
-        }
 
-        // Away Value
-        else if (q.includes('away') && (q.includes('value') || q.includes('edge') || q.includes('positive'))) {
-            data = await db.query(`
-                SELECT ht.name AS home_team, at.name AS away_team,
-                       t.name AS tournament, m.match_date,
-                       wo.away_expected_percentage, wo.away_actual_percentage,
-                       wo.away_edge_percentage, wo.away_edge_type,
-                       wo.home_expected_percentage, wo.home_actual_percentage,
-                       wo.home_edge_percentage, wo.away_decimal_odds
-                FROM winning_odds wo
-                JOIN matches m ON wo.match_id = m.id
-                JOIN teams ht ON m.home_team_id = ht.id
-                JOIN teams at ON m.away_team_id = at.id
-                JOIN tournaments t ON m.tournament_id = t.id
-                WHERE wo.away_is_value = 1 AND wo.away_edge_percentage > 0
-                ORDER BY wo.away_edge_percentage DESC LIMIT 10
-            `);
-            
-            if (data.length > 0) {
-                responseText = `🛫 **${data.length} away teams with positive edge:**\n\n`;
-                data.forEach((m, i) => {
-                    responseText += `${i+1}. ${m.home_team} vs **${m.away_team}**\n`;
-                    responseText += `   Away: ${m.away_expected_percentage}%→${m.away_actual_percentage}% `;
-                    responseText += `(+${m.away_edge_percentage}% edge) 🟡\n`;
-                    responseText += `   Odds: ${m.away_decimal_odds} | ${m.tournament} | ${m.match_date}\n\n`;
-                });
-            } else {
-                responseText = 'No away value bets found.';
+            // Home Expected > 50% + Positive Edge
+            else if (q.includes('home expected') || q.includes('positive edge') || (q.includes('home') && q.includes('edge'))) {
+                data = await db.query(`
+                    SELECT ht.name AS home_team, at.name AS away_team, t.name AS tournament, m.match_date,
+                           wo.home_expected_probability, wo.home_actual_probability,
+                           wo.home_edge_percentage, wo.home_edge_type,
+                           wo.home_expected_decimal
+                    FROM matches m
+                    JOIN teams ht ON m.home_team_id = ht.id
+                    JOIN teams at ON m.away_team_id = at.id
+                    JOIN tournaments t ON m.tournament_id = t.id
+                    LEFT JOIN winning_odds wo ON m.id = wo.match_id
+                    WHERE wo.home_expected_probability > 0.50 AND wo.home_edge_percentage > 0
+                        ${dateFilter}
+                    ORDER BY wo.home_edge_percentage DESC LIMIT 10
+                `, dateParam);
+                
+                responseText = data.length > 0
+                    ? `📊 **${data.length} matches with home expected >50% + positive edge:**\n\n` +
+                      data.map((m, i) => {
+                          const exp = (m.home_expected_probability * 100).toFixed(1);
+                          const act = (m.home_actual_probability * 100).toFixed(1);
+                          return `${i+1}. **${m.home_team} vs ${m.away_team}**\n   🏠 Expected ${exp}% → Actual ${act}% (+${m.home_edge_percentage}%) ✅\n   🎲 ${m.home_expected_decimal} | 🏆 ${m.tournament} | 📅 ${m.match_date}\n`;
+                      }).join('\n')
+                    : 'No matches found with home expected >50% and positive edge.';
             }
-        }
 
-        // Standings
-        else if (q.includes('standings') || q.includes('table') || q.includes('premier league')) {
-            const leagueFilter = q.includes('premier') ? "AND t.name LIKE '%Premier%'" : '';
-            data = await db.query(`
-                SELECT st.position, st.points, st.matches_played, st.wins, st.draws, st.losses,
-                       st.goals_for, st.goals_against, st.goal_difference,
-                       t_team.name AS team_name, t.name AS tournament_name
-                FROM standings st
-                JOIN teams t_team ON st.team_id = t_team.id
-                JOIN tournaments t ON st.tournament_id = t.id
-                ${leagueFilter}
-                ORDER BY st.position ASC LIMIT 20
-            `);
-            
-            if (data.length > 0) {
-                responseText = `🏆 **Standings:**\n\n`;
-                responseText += `Pos | Team | P | W | D | L | GF:GA | GD | Pts\n`;
-                responseText += `---|------|---|---|---|---|------|----|----\n`;
-                data.forEach(s => {
-                    responseText += `${s.position}. ${s.team_name} | ${s.matches_played} | ${s.wins} | ${s.draws} | ${s.losses} | ${s.goals_for}:${s.goals_against} | ${s.goal_difference > 0 ? '+' : ''}${s.goal_difference} | **${s.points}**\n`;
-                });
-            } else {
-                responseText = 'No standings data available.';
+            // Value Bets
+            else if (q.includes('value bet') || q.includes('high confidence') || (q.includes('value') && q.includes('bets'))) {
+                data = await db.query(`
+                    SELECT ht.name AS home_team, at.name AS away_team, t.name AS tournament, m.match_date,
+                           'home' as selection, wo.home_expected_decimal as odds,
+                           wo.home_expected_probability as model_prob, wo.home_actual_probability as actual_prob,
+                           wo.home_edge_percentage as edge, wo.home_edge_type as edge_type
+                    FROM matches m
+                    JOIN teams ht ON m.home_team_id = ht.id JOIN teams at ON m.away_team_id = at.id
+                    JOIN tournaments t ON m.tournament_id = t.id
+                    LEFT JOIN winning_odds wo ON m.id = wo.match_id
+                    WHERE wo.home_is_value = 1 ${dateFilter}
+                    UNION ALL
+                    SELECT ht.name AS home_team, at.name AS away_team, t.name AS tournament, m.match_date,
+                           'away' as selection, wo.away_expected_decimal as odds,
+                           wo.away_expected_probability as model_prob, wo.away_actual_probability as actual_prob,
+                           wo.away_edge_percentage as edge, wo.away_edge_type as edge_type
+                    FROM matches m
+                    JOIN teams ht ON m.home_team_id = ht.id JOIN teams at ON m.away_team_id = at.id
+                    JOIN tournaments t ON m.tournament_id = t.id
+                    LEFT JOIN winning_odds wo ON m.id = wo.match_id
+                    WHERE wo.away_is_value = 1 ${dateFilter}
+                    ORDER BY edge DESC LIMIT 10
+                `, [...dateParam, ...dateParam]);
+                
+                responseText = data.length > 0
+                    ? `💎 **${data.length} Value Bets:**\n\n` +
+                      data.map((b, i) => {
+                          const team = b.selection === 'home' ? b.home_team : b.away_team;
+                          return `${i+1}. **${b.home_team} vs ${b.away_team}**\n   🎯 ${team} @ ${b.odds} | +${b.edge}% edge | ${b.tournament} | ${b.match_date}\n`;
+                      }).join('\n')
+                    : 'No value bets found for this date.';
             }
-        }
 
-        // Top Form
-        else if (q.includes('form') || q.includes('best form')) {
-            data = await db.query(`
-                SELECT ht.name AS team, t.name AS tournament,
-                       COUNT(*) AS played,
-                       SUM(CASE WHEN (m.home_team_id=ht.id AND m.home_score>m.away_score) OR (m.away_team_id=ht.id AND m.away_score>m.home_score) THEN 1 ELSE 0 END) AS wins,
-                       SUM(CASE WHEN m.home_score=m.away_score THEN 1 ELSE 0 END) AS draws,
-                       SUM(CASE WHEN (m.home_team_id=ht.id AND m.home_score<m.away_score) OR (m.away_team_id=ht.id AND m.away_score<m.home_score) THEN 1 ELSE 0 END) AS losses,
-                       ROUND(100.0*SUM(CASE WHEN (m.home_team_id=ht.id AND m.home_score>m.away_score) OR (m.away_team_id=ht.id AND m.away_score>m.home_score) THEN 1 ELSE 0 END)/COUNT(*),1) AS win_rate
-                FROM matches m
-                JOIN teams ht ON m.home_team_id=ht.id
-                JOIN tournaments t ON m.tournament_id=t.id
-                WHERE m.status IN (100,101,102) AND m.match_date > DATE_SUB(CURDATE(), INTERVAL 60 DAY)
-                GROUP BY ht.id, t.id HAVING played>=5
-                ORDER BY win_rate DESC LIMIT 10
-            `);
-            
-            if (data.length > 0) {
-                responseText = `📈 **Top Form (last 60 days, min 5 matches):**\n\n`;
-                data.forEach((t, i) => {
-                    responseText += `${i+1}. ${t.team} | ${t.played}P ${t.wins}W ${t.draws}D ${t.losses}L | **${t.win_rate}%** | ${t.tournament}\n`;
-                });
-            } else {
-                responseText = 'No form data available.';
+            // Underdog Value
+            else if (q.includes('underdog') || (q.includes('away') && q.includes('value'))) {
+                data = await db.query(`
+                    SELECT ht.name AS home_team, at.name AS away_team, t.name AS tournament, m.match_date,
+                           wo.away_expected_probability, wo.away_actual_probability,
+                           wo.away_edge_percentage, wo.away_expected_decimal
+                    FROM matches m
+                    JOIN teams ht ON m.home_team_id = ht.id JOIN teams at ON m.away_team_id = at.id
+                    JOIN tournaments t ON m.tournament_id = t.id
+                    LEFT JOIN winning_odds wo ON m.id = wo.match_id
+                    WHERE wo.away_is_value = 1 AND wo.away_edge_percentage > 0
+                        AND wo.away_expected_probability < 0.45
+                        ${dateFilter}
+                    ORDER BY wo.away_edge_percentage DESC LIMIT 10
+                `, dateParam);
+                
+                responseText = data.length > 0
+                    ? `🦁 **${data.length} Underdog Value Bets:**\n\n` +
+                      data.map((m, i) => {
+                          const exp = (m.away_expected_probability * 100).toFixed(1);
+                          const act = (m.away_actual_probability * 100).toFixed(1);
+                          return `${i+1}. **${m.away_team}** @ ${m.home_team}\n   📊 ${exp}%→${act}% | +${m.away_edge_percentage}% | 🎲 ${m.away_expected_decimal} | ${m.tournament} | ${m.match_date}\n`;
+                      }).join('\n')
+                    : 'No underdog value bets found.';
             }
-        }
 
-        // Default
-        else {
-            responseText = `I can help with:\n• "home expected > 50% and positive edge"\n• "value bets high confidence"\n• "edge above 15%"\n• "away positive edge"\n• "standings" or "premier league table"\n• "best form"\n\nTry one of the preset buttons!`;
-        }
+            // Standings (no date filter needed)
+            else if (q.includes('standings') || q.includes('table')) {
+                let leagueFilter = '';
+                if (q.includes('premier')) leagueFilter = "AND t.name LIKE '%Premier%'";
+                else if (q.includes('la liga')) leagueFilter = "AND t.name LIKE '%La Liga%'";
+                else if (q.includes('bundesliga')) leagueFilter = "AND t.name LIKE '%Bundesliga%'";
+                else if (q.includes('serie a')) leagueFilter = "AND t.name LIKE '%Serie A%'";
+                
+                data = await db.query(`
+                    SELECT st.position, st.points, st.matches_played, st.wins, st.draws, st.losses,
+                           st.goals_for, st.goals_against, st.goal_difference,
+                           t_team.name AS team_name, t.name AS tournament_name
+                    FROM standings st
+                    JOIN teams t_team ON st.team_id = t_team.id
+                    JOIN tournaments t ON st.tournament_id = t.id
+                    WHERE 1=1 ${leagueFilter}
+                    ORDER BY st.position ASC LIMIT 20
+                `);
+                
+                responseText = data.length > 0
+                    ? `🏆 **${data[0].tournament_name || 'League'} Standings:**\n\n` +
+                      "```\nPos Team                     P  W  D  L  GF:GA  GD  Pts\n" +
+                      "--- ----------------------- -- -- -- -- ----- --- ---\n" +
+                      data.map(s => `${String(s.position).padStart(2)}. ${s.team_name.substring(0,24).padEnd(24)} ${String(s.matches_played).padStart(2)} ${String(s.wins).padStart(2)} ${String(s.draws).padStart(2)} ${String(s.losses).padStart(2)} ${s.goals_for}:${s.goals_against} ${String(s.goal_difference > 0 ? '+' + s.goal_difference : s.goal_difference).padStart(3)} ${String(s.points).padStart(3)}`).join('\n') + "\n```"
+                    : 'No standings data available.';
+            }
 
-        res.json({
-            success: true,
-            data: {
-                question,
-                response: responseText,
-                resultCount: data.length,
-                suggestions: ['Home Edge >50%', 'High Value Bets', 'Edge >15%', 'Away Value', 'Top Form', 'PL Standings'],
-                timestamp: new Date().toISOString()
+            // Top Form (no date filter - uses last 60 days)
+            else if (q.includes('form') || q.includes('best form')) {
+                data = await db.query(`
+                    SELECT t_team.name AS team, COUNT(*) AS played,
+                           SUM(CASE WHEN (m.home_team_id=t_team.id AND m.home_score>m.away_score) OR (m.away_team_id=t_team.id AND m.away_score>m.home_score) THEN 1 ELSE 0 END) AS wins,
+                           SUM(CASE WHEN m.home_score=m.away_score THEN 1 ELSE 0 END) AS draws,
+                           ROUND(100.0*SUM(CASE WHEN (m.home_team_id=t_team.id AND m.home_score>m.away_score) OR (m.away_team_id=t_team.id AND m.away_score>m.home_score) THEN 1 ELSE 0 END)/COUNT(*),1) AS win_rate
+                    FROM matches m
+                    JOIN teams t_team ON m.home_team_id=t_team.id OR m.away_team_id=t_team.id
+                    WHERE m.status IN (100,101,102) AND m.match_date >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
+                    GROUP BY t_team.id HAVING played>=5
+                    ORDER BY win_rate DESC LIMIT 10
+                `);
+                
+                responseText = data.length > 0
+                    ? `📈 **Top Form (last 60 days):**\n\n` +
+                      data.map((t, i) => `${i+1}. ${t.win_rate >= 70 ? '🔥' : '📈'} **${t.team}** | ${t.played}P ${t.wins}W ${t.draws}D | **${t.win_rate}%**`).join('\n')
+                    : 'No form data available.';
             }
-        });
-    } catch (error) {
-        console.error('AI error:', error.message);
-        res.json({
-            success: true,
-            data: {
-                question: req.body.question,
-                response: 'I had trouble with that query. Try: "home expected > 50%", "value bets", "edge above 15%", "standings", or "best form".',
-                suggestions: ['Home Edge >50%', 'High Value Bets', 'Edge >15%', 'Top Form']
+
+            // Team search
+            else if (q.includes('team') && (q.includes('expected') || q.includes('probability') || q.includes('odds'))) {
+                const teamMatch = q.match(/team\s+([a-z\s]+?)(?:\s+(?:expected|probability|odds)|$)/i);
+                const team = teamMatch ? teamMatch[1].trim() : null;
+                
+                if (team) {
+                    data = await db.query(`
+                        SELECT ht.name AS home_team, at.name AS away_team, t.name AS tournament, m.match_date,
+                               wo.home_expected_probability, wo.home_actual_probability, wo.home_edge_percentage,
+                               wo.away_expected_probability, wo.away_actual_probability, wo.away_edge_percentage,
+                               wo.home_expected_decimal, wo.away_expected_decimal
+                        FROM matches m
+                        JOIN teams ht ON m.home_team_id=ht.id JOIN teams at ON m.away_team_id=at.id
+                        JOIN tournaments t ON m.tournament_id=t.id
+                        LEFT JOIN winning_odds wo ON m.id=wo.match_id
+                        WHERE (LOWER(ht.name) LIKE ? OR LOWER(at.name) LIKE ?) ${dateFilter}
+                        ORDER BY m.match_date ASC LIMIT 5
+                    `, [`%${team}%`, `%${team}%`, ...dateParam]);
+                    
+                    responseText = data.length > 0
+                        ? `🔍 **Matches for ${team.toUpperCase()}:**\n\n` +
+                          data.map((m, i) => `${i+1}. ${m.home_team} vs ${m.away_team}\n   🏆 ${m.tournament} | 📅 ${m.match_date}\n`).join('')
+                        : `No matches found for "${team}".`;
+                } else {
+                    responseText = "Please specify a team name. Example: 'Team Chelsea expected probability'";
+                }
             }
-        });
+
+            // Default help
+            else {
+                responseText = `🤖 **I can help with:**\n• "high win probability"\n• "home expected >50%"\n• "value bets"\n• "underdog value"\n• "standings"\n• "best form"\n• "Team [name] expected"\n\nTry one of the preset buttons!`;
+            }
+
+            res.json({
+                success: true,
+                data: {
+                    question,
+                    response: responseText,
+                    resultCount: data.length,
+                    date: date || 'today',
+                    suggestions: ['High win probability', 'Value bets', 'Home expected >50%', 'Standings', 'Best form'],
+                    timestamp: new Date().toISOString()
+                }
+            });
+
+        } catch (error) {
+            console.error('[AI] Error:', error.message);
+            res.json({
+                success: true,
+                data: {
+                    question: req.body.question,
+                    response: '❌ Error processing query. Try "high win probability" or "value bets".',
+                    suggestions: ['High win probability', 'Value bets']
+                }
+            });
+        }
     }
-}
 
     async getMatchInsights(req, res, next) {
         try {

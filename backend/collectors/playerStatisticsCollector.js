@@ -225,35 +225,27 @@ class PlayerStatisticsCollector {
 }
 
 /**
- * Process a batch of players
+ * Process a batch of players - CONTINUOUS MODE (no pauses to avoid 403)
  */
 async processBatch(players, date) {
     this.stats = { success: 0, skipped: 0, failed: 0, totalInserted: 0 };
 
-    const BATCH_SIZE = 10, BATCH_DELAY = 5000, MATCH_DELAY = 2000;
+    const MATCH_DELAY = 2000; // Keep small delay between requests to avoid rate limiting
 
-    for (let bs = 0; bs < players.length; bs += BATCH_SIZE) {
-        const be = Math.min(bs + BATCH_SIZE, players.length);
-        const batch = players.slice(bs, be);
-        console.log(`   ── Batch ${Math.floor(bs/BATCH_SIZE)+1}/${Math.ceil(players.length/BATCH_SIZE)} ──\n`);
+    for (let i = 0; i < players.length; i++) {
+        const p = players[i];
+        console.log(`   [${i+1}/${players.length}] ${p.name} (Sofascore ID: ${p.sofascore_player_id})`);
+        const r = await this.collectForPlayer(p.sofascore_player_id);
+        if (r.success) { 
+            this.stats.success++; 
+            this.stats.totalInserted += (r.inserted||0); 
+            console.log(`      ✅ ${r.inserted||0} seasons stored`);
+        }
+        else if (r.skipped) { this.stats.skipped++; console.log(`      ⏭️ ${r.error}`); }
+        else { this.stats.failed++; console.log(`      ❌ ${r.error}`); }
         
-        for (let i = 0; i < batch.length; i++) {
-            const p = batch[i];
-            console.log(`   [${bs+i+1}/${players.length}] ${p.name} (Sofascore ID: ${p.sofascore_player_id})`);
-            const r = await this.collectForPlayer(p.sofascore_player_id);
-            if (r.success) { 
-                this.stats.success++; 
-                this.stats.totalInserted += (r.inserted||0); 
-                console.log(`      ✅ ${r.inserted||0} seasons stored`);
-            }
-            else if (r.skipped) { this.stats.skipped++; console.log(`      ⏭️ ${r.error}`); }
-            else { this.stats.failed++; console.log(`      ❌ ${r.error}`); }
-            await this.delay(MATCH_DELAY);
-        }
-        if (be < players.length) { 
-            console.log(`\n   ⏸️  Pausing ${BATCH_DELAY/1000}s...\n`); 
-            await this.delay(BATCH_DELAY); 
-        }
+        // Small delay between each player - no batch pausing
+        await this.delay(MATCH_DELAY);
     }
 
     console.log(`\n✅ ${this.stats.success} ok, ${this.stats.skipped} skipped, ${this.stats.failed} failed | ${this.stats.totalInserted} rows`);

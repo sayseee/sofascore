@@ -316,27 +316,49 @@ async fetchRounds(t, currentRound) {
 
     const status = event.status?.code || 0;
     const statusDesc = event.status?.description || null;
-
-    const roundInfo = event.roundInfo?.round 
-        ? `Round ${event.roundInfo.round}` 
-        : null;
-
+    const roundInfo = event.roundInfo?.round ? `Round ${event.roundInfo.round}` : null;
     const uniqueTournamentId = event.tournament?.uniqueTournament?.id || null;
 
-    // ⚡ Extract availability flags from the API response
-    // These tell us which data endpoints are available for this match
     const hasLineups = event.hasEventPlayerStatistics || event.hasXg ? 1 : 0;
     const hasStatistics = event.hasXg || event.hasEventPlayerStatistics ? 1 : 0;
     const hasIncidents = event.hasGlobalHighlights || event.status?.code === 100 ? 1 : 0;
-    const hasPlayerStats = event.hasEventPlayerStatistics ? 1 : 0;
-    const hasHeatmap = event.hasEventPlayerHeatMap ? 1 : 0;
 
-    const existing = await db.query(
-        'SELECT id, status, home_score, away_score FROM matches WHERE sofascore_match_id = ?',
+    // ⚡ PRIMARY KEY: sofascore_match_id should be unique
+    // Check if match exists by sofascore_match_id first
+    let existing = await db.query(
+        'SELECT id, status, home_score, away_score, custom_id FROM matches WHERE sofascore_match_id = ?',
         [event.id]
     );
 
+    // If not found, check for potential duplicates by custom_id + teams (postponed matches)
+    if (existing.length === 0 && event.customId) {
+        // Check if there's a match with same custom_id, teams, but different sofascore_match_id
+        // This handles the case where API might change the match ID (unlikely but possible)
+        const potentialDuplicate = await db.query(
+            `SELECT id, sofascore_match_id, status 
+             FROM matches 
+             WHERE custom_id = ? 
+               AND home_team_id = ? 
+               AND away_team_id = ?
+               AND match_date = ?
+             LIMIT 1`,
+            [event.customId, homeTeamId, awayTeamId, matchDate]
+        );
+        
+        if (potentialDuplicate.length > 0) {
+            console.log(`      🔄 Match may have been rescheduled. Old ID: ${potentialDuplicate[0].sofascore_match_id}, New ID: ${event.id}`);
+            existing = potentialDuplicate;
+            
+            // Update the sofascore_match_id to the new one
+            await db.query(
+                'UPDATE matches SET sofascore_match_id = ? WHERE id = ?',
+                [event.id, existing[0].id]
+            );
+        }
+    }
+
     if (existing.length > 0) {
+        // UPDATE existing match
         const current = existing[0];
         const statusChanged = current.status !== status;
         const scoreChanged = current.home_score !== homeScore || current.away_score !== awayScore;
@@ -366,39 +388,98 @@ async fetchRounds(t, currentRound) {
                 ]
             );
             this.stats.matches.updated++;
+            
+            if (statusChanged && [100, 101, 102].includes(status)) {
+                console.log(`      ✅ Match finished! Final score: ${homeScore}-${awayScore}`);
+            }
         }
     } else {
-        await db.query(
-            `INSERT INTO matches 
-            (sofascore_match_id, custom_id, tournament_id, unique_tournament_id, season_id,
-            home_team_id, away_team_id, match_date, match_datetime,
-            status, status_description, round_info,
-            home_score, away_score, home_score_halftime, away_score_halftime,
-            has_lineups, has_statistics, has_incidents)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                event.id,
-                event.customId || null,
-                tournamentId,
-                uniqueTournamentId,
-                seasonId,
-                homeTeamId,
-                awayTeamId,
-                matchDate,
-                matchDateTime,
-                status,
-                statusDesc,
-                roundInfo,
-                homeScore,
-                awayScore,
-                homeScoreHT,
-                awayScoreHT,
-                hasLineups,
-                hasStatistics,
-                hasIncidents
-            ]
-        );
-        this.stats.matches.inserted++;
+        // INSERT new match
+        try {
+            // Verify sofascore_match_id is not already used (safety check)
+            const idCheck = await db.query(
+                'SELECT id FROM matches WHERE sofascore_match_id = ?',
+                [event.id]
+            );
+            
+            if (idCheck.length > 0) {
+                console.log(`      ⚠️ Match ID ${event.id} already exists, updating instead`);
+                await db.query(
+                    `UPDATE matches SET 
+                     home_score = ?, away_score = ?, status = ?, status_description = ?,
+                     updated_at = NOW()
+                     WHERE sofascore_match_id = ?`,
+                    [homeScore, awayScore, status, statusDesc, event.id]
+                );
+                this.stats.matches.updated++;
+                return;
+            }
+            
+            // Insert new match
+            await db.query(
+                `INSERT INTO matches 
+                (sofascore_match_id, custom_id, tournament_id, unique_tournament_id, season_id,
+                home_team_id, away_team_id, match_date, match_datetime,
+                status, status_description, round_info,
+                home_score, away_score, home_score_halftime, away_score_halftime,
+                has_lineups, has_statistics, has_incidents)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    event.id,
+                    event.customId || null,
+                    tournamentId,
+                    uniqueTournamentId,
+                    seasonId,
+                    homeTeamId,
+                    awayTeamId,
+                    matchDate,
+                    matchDateTime,
+                    status,
+                    statusDesc,
+                    roundInfo,
+                    homeScore,
+                    awayScore,
+                    homeScoreHT,
+                    awayScoreHT,
+                    hasLineups,
+                    hasStatistics,
+                    hasIncidents
+                ]
+            );
+            this.stats.matches.inserted++;
+            
+            if (this.stats.matches.inserted % 10 === 0) {
+                console.log(`      📝 Inserted ${this.stats.matches.inserted} new matches so far`);
+            }
+            
+        } catch (error) {
+            // Handle duplicate entry errors
+            if (error.code === 'ER_DUP_ENTRY') {
+                if (error.message.includes('custom_id')) {
+                    // Custom ID duplicate - this is expected for home/away legs
+                    // Just log and continue, don't count as failure
+                    console.log(`      ℹ️ Duplicate custom_id ${event.customId} (expected for H2H legs)`);
+                    this.stats.matches.updated++; // Count as "updated" since it's not a failure
+                } else if (error.message.includes('sofascore_match_id')) {
+                    // This shouldn't happen with our safety check above
+                    console.log(`      ⚠️ Duplicate sofascore_match_id ${event.id} - updating instead`);
+                    await db.query(
+                        `UPDATE matches SET 
+                         home_score = ?, away_score = ?, status = ?, status_description = ?,
+                         updated_at = NOW()
+                         WHERE sofascore_match_id = ?`,
+                        [homeScore, awayScore, status, statusDesc, event.id]
+                    );
+                    this.stats.matches.updated++;
+                } else {
+                    console.error(`      ❌ Duplicate entry error: ${error.message}`);
+                    this.stats.matches.failed++;
+                }
+            } else {
+                console.error(`      ❌ Insert failed: ${error.message}`);
+                this.stats.matches.failed++;
+            }
+        }
     }
 }
 

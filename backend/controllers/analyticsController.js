@@ -1,7 +1,33 @@
 const db = require('../config/database');
 const cache = require('../middleware/cache');
+const teamStrengthService = require('../services/teamStrengthService');
 
 class AnalyticsController {
+
+    // Add this method:
+async getTeamStrengthAnalysis(req, res, next) {
+    try {
+        const matchId = parseInt(req.params.matchId);
+        const strength = await teamStrengthService.calculateMatchStrength(matchId);
+        
+        if (!strength) {
+            return res.json({ 
+                success: true, 
+                data: { 
+                    message: 'Lineups not available for this match',
+                    home: { team: 'Unknown', totalStrength: '0' },
+                    away: { team: 'Unknown', totalStrength: '0' },
+                    analysis: { strengthDifference: '0', homeAdvantage: 'N/A', confidence: 'low' }
+                } 
+            });
+        }
+
+        res.json({ success: true, data: strength });
+    } catch (error) { 
+        console.error('Strength analysis error:', error.message);
+        res.json({ success: true, data: { message: 'Analysis failed: ' + error.message } });
+    }
+}
 
     // ✅ Already works with real data
     async getTeamForm(req, res, next) {
