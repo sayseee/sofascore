@@ -165,25 +165,66 @@ class AIController {
                     : 'No standings data available.';
             }
 
-            // Top Form (no date filter - uses last 60 days)
-            else if (q.includes('form') || q.includes('best form')) {
-                data = await db.query(`
-                    SELECT t_team.name AS team, COUNT(*) AS played,
-                           SUM(CASE WHEN (m.home_team_id=t_team.id AND m.home_score>m.away_score) OR (m.away_team_id=t_team.id AND m.away_score>m.home_score) THEN 1 ELSE 0 END) AS wins,
-                           SUM(CASE WHEN m.home_score=m.away_score THEN 1 ELSE 0 END) AS draws,
-                           ROUND(100.0*SUM(CASE WHEN (m.home_team_id=t_team.id AND m.home_score>m.away_score) OR (m.away_team_id=t_team.id AND m.away_score>m.home_score) THEN 1 ELSE 0 END)/COUNT(*),1) AS win_rate
-                    FROM matches m
-                    JOIN teams t_team ON m.home_team_id=t_team.id OR m.away_team_id=t_team.id
-                    WHERE m.status IN (100,101,102) AND m.match_date >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
-                    GROUP BY t_team.id HAVING played>=5
-                    ORDER BY win_rate DESC LIMIT 10
-                `);
-                
-                responseText = data.length > 0
-                    ? `📈 **Top Form (last 60 days):**\n\n` +
-                      data.map((t, i) => `${i+1}. ${t.win_rate >= 70 ? '🔥' : '📈'} **${t.team}** | ${t.played}P ${t.wins}W ${t.draws}D | **${t.win_rate}%**`).join('\n')
-                    : 'No form data available.';
-            }
+            // Top Form teams that are playing on selected date
+else if (q.includes('form') || q.includes('best form')) {
+    // Get the target date (selected date or today)
+    const targetDate = date ? date : new Date().toISOString().split('T')[0];
+    
+    // First, find all teams playing on the target date
+    const teamsPlayingOnDate = await db.query(`
+        SELECT DISTINCT t_team.id, t_team.name
+        FROM matches m
+        JOIN teams t_team ON m.home_team_id = t_team.id OR m.away_team_id = t_team.id
+        WHERE m.match_date = ?
+    `, [targetDate]);
+    
+    if (teamsPlayingOnDate.length === 0) {
+        const formattedDate = targetDate.split('-').reverse().join('/');
+        responseText = `📅 No matches found on ${formattedDate}.`;
+    } else {
+        // Get form data only for teams playing on the target date
+        // Looking at their last 5 matches BEFORE the target date
+        const teamIds = teamsPlayingOnDate.map(t => t.id);
+        const placeholders = teamIds.map(() => '?').join(',');
+        
+        data = await db.query(`
+            SELECT t_team.name AS team, 
+                   COUNT(*) AS played,
+                   SUM(CASE WHEN (m.home_team_id = t_team.id AND m.home_score > m.away_score) OR 
+                                 (m.away_team_id = t_team.id AND m.away_score > m.home_score) THEN 1 ELSE 0 END) AS wins,
+                   SUM(CASE WHEN m.home_score = m.away_score THEN 1 ELSE 0 END) AS draws,
+                   ROUND(100.0 * SUM(CASE WHEN (m.home_team_id = t_team.id AND m.home_score > m.away_score) OR 
+                                             (m.away_team_id = t_team.id AND m.away_score > m.home_score) THEN 1 ELSE 0 END) / COUNT(*), 1) AS win_rate
+            FROM matches m
+            JOIN teams t_team ON m.home_team_id = t_team.id OR m.away_team_id = t_team.id
+            WHERE t_team.id IN (${placeholders})
+                AND m.status IN (100, 101, 102)
+                AND m.match_date < ?
+            GROUP BY t_team.id
+            HAVING played >= 3
+            ORDER BY win_rate DESC
+        `, [...teamIds, targetDate]);
+        
+        const formattedDate = targetDate.split('-').reverse().join('/');
+        
+        // Filter for teams in excellent form (win_rate > 70%)
+        const inFormTeams = data.filter(t => t.win_rate > 70);
+        
+        if (inFormTeams.length === 0) {
+            responseText = `📊 No teams in excellent form (>70% win rate in last 3+ matches) playing on ${formattedDate}.`;
+        } else {
+            // Take only top 10
+            const topInFormTeams = inFormTeams.slice(0, 10);
+            
+            responseText = `🔥 **HOT FORM TEAMS (>70% WIN RATE) PLAYING ON ${formattedDate}:**\n\n` +
+                topInFormTeams.map((t, i) => {
+                    const formIcon = t.win_rate >= 80 ? '💎' : '🔥';
+                    const record = `${t.wins}W ${t.draws}D ${t.played - t.wins - t.draws}L`;
+                    return `${i+1}. ${formIcon} **${t.team}** | Last ${t.played}: ${record} | **${t.win_rate}%** win rate`;
+                }).join('\n');
+        }
+    }
+}
 
             // Team search
             else if (q.includes('team') && (q.includes('expected') || q.includes('probability') || q.includes('odds'))) {

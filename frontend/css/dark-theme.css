@@ -1,36 +1,50 @@
+:root {
+    --ink: #0d0d0d;
+    --paper: #f5f2eb;
+    --rust: #c0392b;
+    --rust-light: #e74c3c;
+    --sand: #d4a96a;
+    --slate: #2c3e50;
+    --mid: #7f8c8d;
+    --light: #ecf0f1;
+    --green: #27ae60;
+    --amber: #e67e22;
+    --tag-bg: #1a1a1a;
+}
+
 /* ============================================
    Flat Dark Theme - bet365 Style
    No shadows, no animations, compact layout
    ============================================ */
 
 :root[data-theme="dark"] {
-    /* Base */
-    --bg-primary: #1a1a1a;
-    --bg-secondary: #222222;
-    --bg-tertiary: #2a2a2a;
-    --bg-card: #252525;
-    --bg-hover: #2e2e2e;
-    --bg-header: #1e1e1e;
+    /* Base - using ink/slate */
+    --bg-primary: var(--ink, #0d0d0d);
+    --bg-secondary: #1a1a1a;
+    --bg-tertiary: #222222;
+    --bg-card: #141414;
+    --bg-hover: #1a1a1a;
+    --bg-header: #111111;
     
-    /* Text */
-    --text-primary: #e8e8e8;
-    --text-secondary: #b0b0b0;
-    --text-tertiary: #777777;
-    --text-accent: #ffd700;
+    /* Text - using paper/light */
+    --text-primary: var(--paper, #f5f2eb);
+    --text-secondary: var(--light, #ecf0f1);
+    --text-tertiary: var(--mid, #7f8c8d);
+    --text-accent: var(--sand, #d4a96a);
     
-    /* Accent - bet365 uses yellow/green */
-    --accent-primary: #ffd700;
-    --accent-secondary: #e6c200;
-    --accent-success: #00a854;
-    --accent-danger: #d9534f;
-    --accent-warning: #f0ad4e;
-    --accent-blue: #337ab7;
+    /* Accent - using rust/sand/green */
+    --accent-primary: var(--rust-light, #e74c3c);
+    --accent-secondary: var(--rust, #c0392b);
+    --accent-success: var(--green, #27ae60);
+    --accent-danger: var(--rust, #c0392b);
+    --accent-warning: var(--amber, #e67e22);
+    --accent-blue: var(--slate, #2c3e50);
     --accent-purple: #8b5cf6;
     
     /* Borders */
-    --border-primary: #333333;
-    --border-secondary: #3a3a3a;
-    --border-accent: #ffd700;
+    --border-primary: #2a2a2a;
+    --border-secondary: #333333;
+    --border-accent: var(--sand, #d4a96a);
     
     /* No shadows */
     --shadow-sm: none;
@@ -45,18 +59,21 @@
     --gradient-danger: none;
     
     /* Component */
-    --navbar-bg: #1a1a1a;
-    --navbar-border: #333333;
-    --card-header-bg: #1e1e1e;
-    --input-bg: #222222;
-    --input-border: #333333;
-    --input-focus: #ffd700;
+    --navbar-bg: #0a0a0a;
+    --navbar-border: #222222;
+    --card-header-bg: #111111;
+    --input-bg: #141414;
+    --input-border: #2a2a2a;
+    --input-focus: var(--sand, #d4a96a);
+    
+    /* Tag background */
+    --tag-bg: #1a1a1a;
     
     /* Charts */
-    --chart-grid: #2a2a2a;
-    --chart-line-1: #ffd700;
-    --chart-line-2: #00a854;
-    --chart-line-3: #337ab7;
+    --chart-grid: #1a1a1a;
+    --chart-line-1: var(--rust-light, #e74c3c);
+    --chart-line-2: var(--green, #27ae60);
+    --chart-line-3: var(--sand, #d4a96a);
 }
 
 * {
@@ -65,13 +82,13 @@
     box-sizing: border-box;
 }
 
-body {
-    font-family: Arial, Helvetica, sans-serif;
+body { 
     font-size: 12px;
     background: var(--bg-primary);
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     line-height: 1.3;
+    font-family: 'DM Sans', sans-serif;
 }
 
 a {
@@ -86,5 +103,22 @@ a:hover {
 /* Thin scrollbar - 3px */
 ::-webkit-scrollbar { width: 3px; height: 3px; }
 ::-webkit-scrollbar-track { background: var(--bg-secondary); }
-::-webkit-scrollbar-thumb { background: #444444; border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: #555555; }
+::-webkit-scrollbar-thumb { background: #333333; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--sand, #d4a96a); }
+
+/* Optional: Additional utility classes using the new palette */
+.text-rust { color: var(--rust); }
+.text-rust-light { color: var(--rust-light); }
+.text-sand { color: var(--sand); }
+.text-slate { color: var(--slate); }
+.text-green { color: var(--green); }
+.text-amber { color: var(--amber); }
+.text-paper { color: var(--paper); }
+
+.bg-rust { background: var(--rust); }
+.bg-sand { background: var(--sand); }
+.bg-slate { background: var(--slate); }
+.bg-ink { background: var(--ink); }
+
+.border-rust { border-color: var(--rust); }
+.border-sand { border-color: var(--sand); }
